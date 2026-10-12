@@ -11,7 +11,6 @@ class Customer(Base):
     phone = Column(String(20), unique=True, nullable=False)
     password = Column(String(255), nullable=False)
     name = Column(String(100), nullable=False)
-    address = Column(String(255), nullable=False)
 
     addresses = relationship(
         "CustomerAddress",

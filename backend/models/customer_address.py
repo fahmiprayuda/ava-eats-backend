@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Float
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -6,17 +6,9 @@ from database import Base
 class CustomerAddress(Base):
     __tablename__ = "customer_addresses"
 
-    id = Column(
-        Integer,
-        primary_key=True,
-        index=True
-        )
+    id = Column(Integer, primary_key=True, index=True)
 
-    customer_id = Column(
-        Integer,
-        ForeignKey("customers.id"),
-        nullable=False
-        )
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
 
     label = Column(String(50), nullable=False)
     recipient_name = Column(String(100), nullable=False)
@@ -28,7 +20,11 @@ class CustomerAddress(Base):
     district = Column(String(100), nullable=False)
     postal_code = Column(String(10), nullable=False)
 
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+
     is_default = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True, nullable=False)
 
     customer = relationship(
         "Customer",

@@ -6,6 +6,7 @@ class OrderStatus(str, Enum):
     PENDING = "pending"
     PAID = "paid"
     DONE = "done"
+    CANCELLED = "cancelled"
 
 
 class OrderStatusRequest(BaseModel):

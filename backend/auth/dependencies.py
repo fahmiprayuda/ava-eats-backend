@@ -26,6 +26,14 @@ def get_current_admin(
         )
 
         admin_id = payload.get("sub")
+        role = payload.get("role")
+
+        if role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Token bukan milik admin"
+            )
+
 
         if admin_id is None:
             raise HTTPException(

@@ -13,3 +13,9 @@ class AdminCreate(BaseModel):
         min_length=6,
         max_length=100
     )
+    
+    name: str = Field(
+        ...,
+        min_length=3,
+        max_length=100
+    )

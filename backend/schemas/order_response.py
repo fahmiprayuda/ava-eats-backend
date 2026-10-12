@@ -28,12 +28,7 @@ class OrderResponse(BaseModel):
     postal_code: str
 
     notes: Optional[str]
-
     total_amount: int
-
-    payment_method: str
-    payment_proof: Optional[str]
-
     status: str
 
     items: List[OrderItemResponse]

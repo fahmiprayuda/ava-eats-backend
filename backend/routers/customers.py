@@ -37,8 +37,7 @@ def register_customer(
     new_customer = Customer(
         phone=customer.phone,
         password=hash_password(customer.password),
-        name=customer.name,
-        address=customer.address
+        name=customer.name
     )
 
     db.add(new_customer)
@@ -50,8 +49,7 @@ def register_customer(
         "customer": {
             "id": new_customer.id,
             "phone": new_customer.phone,
-            "name": new_customer.name,
-            "address": new_customer.address
+            "name": new_customer.name
         }
     }
 

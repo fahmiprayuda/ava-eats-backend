@@ -18,3 +18,10 @@ class PaymentRequest(BaseModel):
 
 class PaymentVerifyRequest(BaseModel):
     status: str
+
+
+class GatewayPaymentRequest(BaseModel):
+    payment_method: str = Field(
+        default="other_qris",
+        max_length=30
+    )

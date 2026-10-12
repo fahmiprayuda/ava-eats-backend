@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
+
 from models.admin import Admin
 from models.customer import Customer
 from models.customer_address import CustomerAddress
 from models.product import Product
 from models.order import Order
 from models.order_item import OrderItem
+from models.payment import Payment
 
 from schemas.order import OrderRequest
 from schemas.order_response import OrderResponse
@@ -19,6 +21,7 @@ from schemas.order_status import OrderStatusRequest
 from auth.dependencies import get_current_customer, require_admin
 
 from utils.audit import create_audit_log
+from services.midtrans import get_transaction_status
 
 
 router = APIRouter(
@@ -34,14 +37,20 @@ def create_order(
 ):
 
     # 2. Cek address
-    address = db.query(CustomerAddress).filter(
-        CustomerAddress.id == data.address_id
-    ).first()
+    address = (
+        db.query(CustomerAddress)
+        .filter(
+            CustomerAddress.id == data.address_id,
+            CustomerAddress.customer_id == current_customer.id,
+            CustomerAddress.is_active.is_(True),
+        )
+        .first()
+    )
 
     if not address:
         raise HTTPException(
             status_code=404,
-            detail="Address tidak ditemukan"
+            detail="Alamat aktif tidak ditemukan",
         )
 
     # 3. Pastikan address milik customer
@@ -111,6 +120,10 @@ def create_order(
     order_code = f"ORDER-{today}-{next_number:02d}"
 
 
+    print("=== CHECK ADDRESS COORDINATES ===")
+    print("Address ID:", address.id)    
+    print("Address latitude:", repr(address.latitude))
+    print("Address longitude:", repr(address.longitude))
     # 6. Create order
     order = Order(
         order_code=order_code,
@@ -126,11 +139,14 @@ def create_order(
         district=address.district,
         postal_code=address.postal_code,
 
+        latitude=address.latitude,
+        longitude=address.longitude,
+
         notes=data.notes,
 
         total_amount=total_amount,
-
-        payment_method=data.payment_method,
+        shipping_cost=0,
+        grand_total=total_amount,
 
         status="pending"
     )
@@ -139,6 +155,10 @@ def create_order(
 
     # Supaya order.id tersedia
     db.flush()
+    print("=== CHECK CREATED ORDER ===")
+    print("Order ID:", order.id)
+    print("Order latitude:", repr(order.latitude))
+    print("Order longitude:", repr(order.longitude))
 
     # 7. Create order items + kurangi stock
     for item_data in order_items_data:
@@ -175,6 +195,138 @@ def create_order(
     )
 
     # 8. Simpan semuanya
+    db.commit()
+    db.refresh(order)
+
+    return order
+
+@router.post("/{order_id}/cancel", response_model=OrderResponse)
+def cancel_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_customer: Customer = Depends(get_current_customer)
+):
+    # 1. Cari order
+    order = db.query(Order).filter(
+        Order.id == order_id
+    ).first()
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order tidak ditemukan"
+        )
+
+    # 2. Pastikan order milik customer
+    if order.customer_id != current_customer.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Anda tidak memiliki akses ke order ini"
+        )
+
+    # 3. Hanya order pending yang boleh dibatalkan
+    if order.status != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Order dengan status '{order.status}' "
+                "tidak bisa dibatalkan"
+            )
+        )
+
+    # 4. Cari payment Midtrans yang masih pending
+    payment = db.query(Payment).filter(
+        Payment.order_id == order.id,
+        Payment.gateway == "midtrans",
+        Payment.status == "pending"
+    ).order_by(
+        Payment.id.desc()
+    ).first()
+
+    # 5. Kalau ada payment pending, cek status ke Midtrans
+    if payment:
+        if not payment.gateway_order_id:
+            raise HTTPException(
+                status_code=500,
+                detail="Payment Midtrans tidak memiliki gateway_order_id"
+            )
+
+        try:
+            midtrans_status = get_transaction_status(
+                payment.gateway_order_id
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Gagal mengecek status payment ke Midtrans: "
+                    f"{str(e)}"
+                )
+            )
+
+        transaction_status = midtrans_status.get(
+            "transaction_status"
+        )
+
+        # Payment masih pending di Midtrans
+        if transaction_status == "pending":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Order memiliki payment yang masih menunggu "
+                    "pembayaran. Batalkan payment terlebih dahulu."
+                )
+            )
+
+        # Payment sudah berhasil
+        if transaction_status in ["settlement", "capture"]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Payment sudah berhasil. "
+                    "Order tidak dapat dibatalkan melalui endpoint ini."
+                )
+            )
+
+        # Payment expired / gagal
+        if transaction_status == "expire":
+            payment.status = "expired"
+
+        elif transaction_status in [
+            "deny",
+            "cancel",
+            "failure"
+        ]:
+            payment.status = "rejected"
+
+    # 6. Kembalikan stock
+    for item in order.items:
+        product = db.query(Product).filter(
+            Product.id == item.product_id
+        ).first()
+
+        if product:
+            product.stock += item.quantity
+
+    # 7. Ubah status order
+    order.status = "cancelled"
+
+    # 8. Audit trail
+    create_audit_log(
+        db=db,
+        user_type="customer",
+        user_id=current_customer.id,
+        action="ORDER_CANCELLED",
+        entity_type="Order",
+        entity_id=order.id,
+        description=(
+            f"Order {order.order_code} "
+            f"has been cancelled by customer "
+            f"{current_customer.name}"
+        )
+    )
+
+    # 9. Simpan semua perubahan
     db.commit()
     db.refresh(order)
 
@@ -232,7 +384,7 @@ def update_order_status(
     order_id: int,
     data: OrderStatusRequest,
     db: Session = Depends(get_db),
-    current_customer: Customer = Depends(get_current_customer)
+    current_admin: Admin = Depends(require_admin)
 ):
     # 1. Cek order
     order = db.query(Order).filter(
@@ -249,10 +401,14 @@ def update_order_status(
     allowed_transitions = {
         "pending": ["paid"],
         "paid": ["done"],
-        "done": []
+        "done": [],
+        "cancelled": []
     }
 
-    if data.status not in allowed_transitions[order.status]:
+    if data.status not in allowed_transitions.get(
+        order.status,
+        []
+    ):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -264,6 +420,22 @@ def update_order_status(
     # 3. Update status
     order.status = data.status
 
+    # 4. Audit trail
+    create_audit_log(
+        db=db,
+        user_type="admin",
+        user_id=current_admin.id,
+        action="ORDER_STATUS_UPDATED",
+        entity_type="Order",
+        entity_id=order.id,
+        description=(
+            f"Order {order.order_code} "
+            f"status changed to {data.status} "
+            f"by admin {current_admin.name}"
+        )
+    )
+
+    # 5. Simpan
     db.commit()
     db.refresh(order)
 

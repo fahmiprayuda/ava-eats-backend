@@ -8,10 +8,12 @@ from models.order import Order
 from models.payment import Payment
 from models.admin import Admin
 from models.customer import Customer
-from schemas.payment import PaymentRequest, PaymentVerifyRequest
-from schemas.payment_response import PaymentResponse
+from models.shipment import Shipment
+from schemas.payment import PaymentRequest, PaymentVerifyRequest, GatewayPaymentRequest
+from schemas.payment_response import PaymentResponse, GatewayPaymentResponse
 from auth.dependencies import get_current_customer, require_admin
 from utils.audit import create_audit_log
+from services.midtrans import create_snap_transaction, get_transaction_status
 
 router = APIRouter(
     prefix="/api/payments",
@@ -255,3 +257,333 @@ def verify_payment(
 
     return payment
 
+
+@router.post(
+    "/orders/{order_id}/gateway",
+    response_model=GatewayPaymentResponse
+)
+def create_gateway_payment(
+    order_id: int,
+    data: GatewayPaymentRequest,
+    db: Session = Depends(get_db),
+    current_customer: Customer = Depends(get_current_customer)
+):
+
+    # 1. Cari order
+    order = db.query(Order).filter(
+        Order.id == order_id
+    ).first()
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order tidak ditemukan"
+        )
+
+    # 2. Ownership
+    if order.customer_id != current_customer.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Anda tidak memiliki akses ke order ini"
+        )
+
+    # 3. Order harus pending
+    if order.status != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Order dengan status '{order.status}' "
+                "tidak bisa melakukan pembayaran"
+            )
+        )
+
+    # Pastikan shipping sudah dipilih
+    shipment = (
+        db.query(Shipment)
+        .filter(Shipment.order_id == order.id)
+        .first()
+    )
+
+    if not shipment or not shipment.courier or not shipment.service:
+        raise HTTPException(
+            status_code=400,
+            detail="Pilih shipping terlebih dahulu sebelum pembayaran"
+        )
+
+    if shipment.shipping_cost is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Ongkos kirim belum ditentukan"
+        )
+
+    if shipment.shipping_cost != order.shipping_cost:
+        raise HTTPException(
+            status_code=400,
+            detail="Ongkos kirim tidak konsisten dengan order"
+        )
+
+    if order.grand_total != order.total_amount + order.shipping_cost:
+        raise HTTPException(
+            status_code=400,
+            detail="Grand total order tidak valid"
+        )
+
+
+    # =====================================================
+    # 4. CEK PAYMENT MIDTRANS YANG MASIH PENDING
+    # =====================================================
+
+    existing_payment = db.query(Payment).filter(
+        Payment.order_id == order.id,
+        Payment.gateway == "midtrans",
+        Payment.status == "pending"
+    ).order_by(
+        Payment.id.desc()
+    ).first()
+
+    if existing_payment:
+
+        # Pastikan payment lama punya gateway_order_id
+        if not existing_payment.gateway_order_id:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Payment Midtrans lama tidak memiliki "
+                    "gateway_order_id"
+                )
+            )
+
+        # =================================================
+        # 5. CEK STATUS AKTUAL KE MIDTRANS
+        # =================================================
+
+        try:
+            midtrans_status = get_transaction_status(
+                existing_payment.gateway_order_id
+            )
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Gagal mengecek status payment ke Midtrans: "
+                    f"{str(e)}"
+                )
+            )
+
+        transaction_status = midtrans_status.get(
+            "transaction_status"
+        )
+
+        # =================================================
+        # 6. MASIH PENDING DI MIDTRANS
+        # =================================================
+
+        if transaction_status == "pending":
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Payment sebelumnya masih menunggu "
+                    "pembayaran"
+                )
+            )
+
+        # =================================================
+        # 7. SUDAH BERHASIL DIBAYAR
+        # =================================================
+
+        elif transaction_status in [
+            "settlement",
+            "capture"
+        ]:
+
+            existing_payment.status = "approved"
+
+            order.status = "paid"
+
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_APPROVED",
+                entity_type="payment",
+                entity_id=existing_payment.id,
+                description=(
+                    f"Payment {order.order_code} "
+                    f"approved saat pengecekan status Midtrans"
+                )
+            )
+
+            db.commit()
+
+            return {
+                "payment_id": existing_payment.id,
+                "order_id": order.id,
+                "order_code": order.order_code,
+                "payment_method": existing_payment.payment_method,
+                "amount": existing_payment.amount,
+                "status": existing_payment.status,
+                "payment_url": existing_payment.payment_url,
+                "gateway_token": existing_payment.gateway_token,
+                "expires_at": existing_payment.expires_at
+            }
+
+        # =================================================
+        # 8. EXPIRED
+        # =================================================
+
+        elif transaction_status == "expire":
+
+            existing_payment.status = "expired"
+
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_EXPIRED",
+                entity_type="payment",
+                entity_id=existing_payment.id,
+                description=(
+                    f"Payment {order.order_code} "
+                    f"expired saat pengecekan status Midtrans"
+                )
+            )
+
+            db.flush()
+
+        # =================================================
+        # 9. REJECTED
+        # =================================================
+
+        elif transaction_status in [
+            "deny",
+            "cancel",
+            "failure"
+        ]:
+
+            existing_payment.status = "rejected"
+
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_REJECTED",
+                entity_type="payment",
+                entity_id=existing_payment.id,
+                description=(
+                    f"Payment {order.order_code} "
+                    f"rejected saat pengecekan status Midtrans "
+                    f"dengan status {transaction_status}"
+                )
+            )
+
+            db.flush()
+
+        else:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Status payment dari Midtrans tidak "
+                    f"dikenali: {transaction_status}"
+                )
+            )
+
+    # =====================================================
+    # 10. BUAT PAYMENT BARU
+    # =====================================================
+
+    payment = Payment(
+        order_id=order.id,
+        payment_method=data.payment_method,
+        gateway="midtrans",
+        amount=order.grand_total,
+        status="pending"
+    )
+
+    db.add(payment)
+
+    # Supaya payment.id tersedia
+    db.flush()
+
+    # =====================================================
+    # 11. BUAT GATEWAY ORDER ID UNIK
+    # =====================================================
+
+    gateway_order_id = (
+        f"{order.order_code}-P{payment.id}"
+    )
+
+    payment.gateway_order_id = gateway_order_id
+
+    # =====================================================
+    # 12. CREATE TRANSACTION DI MIDTRANS
+    # =====================================================
+
+    try:
+
+        midtrans_result = create_snap_transaction(
+            order_id=gateway_order_id,
+            gross_amount=order.grand_total,
+            customer_name=current_customer.name,
+            customer_phone=current_customer.phone,
+            payment_method=data.payment_method
+        )
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=502,
+            detail=str(e)
+        )
+
+    # =====================================================
+    # 13. SIMPAN RESPONSE MIDTRANS
+    # =====================================================
+
+    payment.gateway_token = midtrans_result["token"]
+
+    payment.payment_url = midtrans_result["redirect_url"]
+
+    # =====================================================
+    # 14. AUDIT
+    # =====================================================
+
+    create_audit_log(
+        db=db,
+        user_type="customer",
+        user_id=current_customer.id,
+        action="PAYMENT_CREATED",
+        entity_type="payment",
+        entity_id=payment.id,
+        description=(
+            f"Payment {order.order_code} "
+            f"has been created through Midtrans "
+            f"with gateway order ID "
+            f"{gateway_order_id} "
+            f"by customer {current_customer.name}"
+        )
+    )
+
+    # =====================================================
+    # 15. COMMIT
+    # =====================================================
+
+    db.commit()
+
+    db.refresh(payment)
+
+    return {
+        "payment_id": payment.id,
+        "order_id": order.id,
+        "order_code": order.order_code,
+        "payment_method": payment.payment_method,
+        "amount": payment.amount,
+        "status": payment.status,
+        "payment_url": payment.payment_url,
+        "gateway_token": payment.gateway_token,
+        "expires_at": payment.expires_at
+    }

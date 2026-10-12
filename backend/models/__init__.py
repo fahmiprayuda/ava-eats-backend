@@ -6,3 +6,4 @@ from .order_item import OrderItem
 from .payment import Payment
 from .admin import Admin
 from .audit_trail import AuditTrail
+from .shipment import Shipment

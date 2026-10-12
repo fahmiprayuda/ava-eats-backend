@@ -18,7 +18,7 @@ ALGORITHM = os.getenv(
 ACCESS_TOKEN_EXPIRE_MINUTES = int(
     os.getenv(
         "JWT_EXPIRE_MINUTES",
-        "5"
+        "30"
     )
 )
 
