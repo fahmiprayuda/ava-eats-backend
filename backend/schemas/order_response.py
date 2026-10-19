@@ -1,6 +1,7 @@
+from pydantic import BaseModel
+
 from typing import List, Optional
 
-from pydantic import BaseModel
 
 
 class OrderItemResponse(BaseModel):
@@ -17,7 +18,7 @@ class OrderResponse(BaseModel):
     order_code: str
 
     customer_id: int
-    address_id: int
+    address_id: Optional[int] = None
 
     recipient_name: str
     phone: str
@@ -30,5 +31,9 @@ class OrderResponse(BaseModel):
     notes: Optional[str]
     total_amount: int
     status: str
+
+    fulfillment_method: str
+    shipping_cost: int
+    grand_total: int
 
     items: List[OrderItemResponse]

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,8 @@ class OrderItemRequest(BaseModel):
 
 
 class OrderRequest(BaseModel):
-    address_id: int = Field(..., gt=0)
-    items: List[OrderItemRequest] = Field(..., min_items=1)
-    notes: Optional[str] = Field(None, max_length=500)
+    fulfillment_method: Literal["delivery", "pickup"] = "delivery"
+    address_id: Optional[int] = None
+    items: list[OrderItemRequest]
+    notes: Optional[str] = None
+    payment_method: Optional[str] = None

@@ -297,40 +297,60 @@ def create_gateway_payment(
             )
         )
 
-    # Pastikan shipping sudah dipilih
-    shipment = (
-        db.query(Shipment)
-        .filter(Shipment.order_id == order.id)
-        .first()
-    )
+    
+    # =====================================================
+    # 4. VALIDASI FULFILLMENT & SHIPPING
+    # =====================================================
 
-    if not shipment or not shipment.courier or not shipment.service:
-        raise HTTPException(
-            status_code=400,
-            detail="Pilih shipping terlebih dahulu sebelum pembayaran"
+    if order.fulfillment_method == "delivery":
+
+        # Delivery wajib punya shipping yang sudah dipilih
+        shipment = (
+            db.query(Shipment)
+            .filter(Shipment.order_id == order.id)
+            .first()
         )
 
-    if shipment.shipping_cost is None:
+        if not shipment or not shipment.courier or not shipment.service:
+            raise HTTPException(
+                status_code=400,
+                detail="Pilih shipping terlebih dahulu sebelum pembayaran"
+            )
+
+        if shipment.shipping_cost is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Ongkos kirim belum ditentukan"
+            )
+
+        if shipment.shipping_cost != order.shipping_cost:
+            raise HTTPException(
+                status_code=400,
+                detail="Ongkos kirim tidak konsisten dengan order"
+            )
+
+        if order.grand_total != order.total_amount + order.shipping_cost:
+            raise HTTPException(
+                status_code=400,
+                detail="Grand total order tidak valid"
+            )
+
+    elif order.fulfillment_method == "pickup":
+
+        # Pickup tidak membutuhkan kurir atau shipment
+        order.shipping_cost = 0
+        order.grand_total = order.total_amount
+
+    else:
         raise HTTPException(
             status_code=400,
-            detail="Ongkos kirim belum ditentukan"
+            detail="Metode fulfillment tidak valid"
         )
 
-    if shipment.shipping_cost != order.shipping_cost:
-        raise HTTPException(
-            status_code=400,
-            detail="Ongkos kirim tidak konsisten dengan order"
-        )
-
-    if order.grand_total != order.total_amount + order.shipping_cost:
-        raise HTTPException(
-            status_code=400,
-            detail="Grand total order tidak valid"
-        )
 
 
     # =====================================================
-    # 4. CEK PAYMENT MIDTRANS YANG MASIH PENDING
+    # 5. CEK PAYMENT MIDTRANS YANG MASIH PENDING
     # =====================================================
 
     existing_payment = db.query(Payment).filter(
@@ -354,7 +374,7 @@ def create_gateway_payment(
             )
 
         # =================================================
-        # 5. CEK STATUS AKTUAL KE MIDTRANS
+        # 6. CEK STATUS AKTUAL KE MIDTRANS
         # =================================================
 
         try:
@@ -376,7 +396,7 @@ def create_gateway_payment(
         )
 
         # =================================================
-        # 6. MASIH PENDING DI MIDTRANS
+        # 7. MASIH PENDING DI MIDTRANS
         # =================================================
 
         if transaction_status == "pending":
@@ -390,7 +410,7 @@ def create_gateway_payment(
             )
 
         # =================================================
-        # 7. SUDAH BERHASIL DIBAYAR
+        # 8. SUDAH BERHASIL DIBAYAR
         # =================================================
 
         elif transaction_status in [
@@ -430,7 +450,7 @@ def create_gateway_payment(
             }
 
         # =================================================
-        # 8. EXPIRED
+        # 9. EXPIRED
         # =================================================
 
         elif transaction_status == "expire":
@@ -453,7 +473,7 @@ def create_gateway_payment(
             db.flush()
 
         # =================================================
-        # 9. REJECTED
+        # 10. REJECTED
         # =================================================
 
         elif transaction_status in [
@@ -491,7 +511,7 @@ def create_gateway_payment(
             )
 
     # =====================================================
-    # 10. BUAT PAYMENT BARU
+    # 11. BUAT PAYMENT BARU
     # =====================================================
 
     payment = Payment(
@@ -508,7 +528,7 @@ def create_gateway_payment(
     db.flush()
 
     # =====================================================
-    # 11. BUAT GATEWAY ORDER ID UNIK
+    # 12. BUAT GATEWAY ORDER ID UNIK
     # =====================================================
 
     gateway_order_id = (
@@ -518,7 +538,7 @@ def create_gateway_payment(
     payment.gateway_order_id = gateway_order_id
 
     # =====================================================
-    # 12. CREATE TRANSACTION DI MIDTRANS
+    # 13. CREATE TRANSACTION DI MIDTRANS
     # =====================================================
 
     try:
@@ -541,7 +561,7 @@ def create_gateway_payment(
         )
 
     # =====================================================
-    # 13. SIMPAN RESPONSE MIDTRANS
+    # 14. SIMPAN RESPONSE MIDTRANS
     # =====================================================
 
     payment.gateway_token = midtrans_result["token"]
@@ -549,7 +569,7 @@ def create_gateway_payment(
     payment.payment_url = midtrans_result["redirect_url"]
 
     # =====================================================
-    # 14. AUDIT
+    # 15. AUDIT
     # =====================================================
 
     create_audit_log(
@@ -569,7 +589,7 @@ def create_gateway_payment(
     )
 
     # =====================================================
-    # 15. COMMIT
+    # 16. COMMIT
     # =====================================================
 
     db.commit()

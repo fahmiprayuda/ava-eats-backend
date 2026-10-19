@@ -18,7 +18,8 @@ class Order(Base):
     id = Column(Integer, primary_key=True, index=True)
     order_code = Column(String(30), unique=True, nullable=False)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
-    address_id = Column( Integer, ForeignKey("customer_addresses.id"), nullable=False)
+    address_id = Column( Integer, ForeignKey("customer_addresses.id"), nullable=True)
+    fulfillment_method = Column(String(20), nullable=False, default="delivery")
 
     # Snapshot alamat saat order dibuat
     recipient_name = Column(String(100), nullable=False)

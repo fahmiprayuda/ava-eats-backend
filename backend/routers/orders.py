@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import List
 
@@ -36,29 +37,48 @@ def create_order(
     db: Session = Depends(get_db)
 ):
 
-    # 2. Cek address
-    address = (
-        db.query(CustomerAddress)
-        .filter(
-            CustomerAddress.id == data.address_id,
-            CustomerAddress.customer_id == current_customer.id,
-            CustomerAddress.is_active.is_(True),
-        )
-        .first()
-    )
+    fulfillment_method = data.fulfillment_method
+    address = None
 
-    if not address:
-        raise HTTPException(
-            status_code=404,
-            detail="Alamat aktif tidak ditemukan",
+    if fulfillment_method == "delivery":
+        if not data.address_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Pilih alamat pengiriman terlebih dahulu",
+            )
+
+        address = (
+            db.query(CustomerAddress)
+            .filter(
+                CustomerAddress.id == data.address_id,
+                CustomerAddress.customer_id == current_customer.id,
+                CustomerAddress.is_active.is_(True),
+            )
+            .first()
         )
 
-    # 3. Pastikan address milik customer
-    if address.customer_id != current_customer.id:
+        if not address:
+            raise HTTPException(
+                status_code=404,
+                detail="Alamat aktif tidak ditemukan",
+            )
+
+    elif fulfillment_method == "pickup":
+        address = None
+
+    else:
         raise HTTPException(
-            status_code=403,
-            detail="Anda tidak memiliki akses ke alamat ini"
-    )
+            status_code=400,
+            detail="Metode pemenuhan pesanan tidak valid"
+        )
+
+    # 3. Pastikan address milik customer untuk delivery
+    if fulfillment_method == "delivery":
+        if address.customer_id != current_customer.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Anda tidak memiliki akses ke alamat ini"
+            )
 
     # 4. Cek product + stock
     order_items_data = []
@@ -121,34 +141,65 @@ def create_order(
 
 
     print("=== CHECK ADDRESS COORDINATES ===")
-    print("Address ID:", address.id)    
-    print("Address latitude:", repr(address.latitude))
-    print("Address longitude:", repr(address.longitude))
+    if fulfillment_method == "delivery":
+        print("Address ID:", address.id)
+        print("Address latitude:", repr(address.latitude))
+        print("Address longitude:", repr(address.longitude))
+    else:
+        print("Pickup order: menggunakan lokasi toko")
+    
     # 6. Create order
+    if fulfillment_method == "delivery":
+        order_address_id = address.id
+        recipient_name = address.recipient_name
+        phone = address.phone
+        order_address = address.address
+        province = address.province
+        city = address.city
+        district = address.district
+        postal_code = address.postal_code
+        latitude = address.latitude
+        longitude = address.longitude
+
+    else:
+        order_address_id = None
+        recipient_name = current_customer.name
+        phone = current_customer.phone
+        order_address = os.getenv(
+            "STORE_ADDRESS",
+            "Cluster The Awa, Blok B1 No 27, Ciriung, "
+            "Kec. Cibinong, Kabupaten Bogor, Jawa Barat",
+        )
+        province = "Jawa Barat"
+        city = "Kabupaten Bogor"
+        district = "Cibinong"
+        postal_code = os.getenv("STORE_POSTAL_CODE", "16918")
+        latitude = float(
+            os.getenv("STORE_LATITUDE", "-6.459818049304167")
+        )
+        longitude = float(
+            os.getenv("STORE_LONGITUDE", "106.87384403716149")
+        )
+
     order = Order(
         order_code=order_code,
-
         customer_id=current_customer.id,
-        address_id=address.id,
-
-        recipient_name=address.recipient_name,
-        phone=address.phone,
-        address=address.address,
-        province=address.province,
-        city=address.city,
-        district=address.district,
-        postal_code=address.postal_code,
-
-        latitude=address.latitude,
-        longitude=address.longitude,
-
+        address_id=order_address_id,
+        fulfillment_method=fulfillment_method,
+        recipient_name=recipient_name,
+        phone=phone,
+        address=order_address,
+        province=province,
+        city=city,
+        district=district,
+        postal_code=postal_code,
+        latitude=latitude,
+        longitude=longitude,
         notes=data.notes,
-
         total_amount=total_amount,
         shipping_cost=0,
         grand_total=total_amount,
-
-        status="pending"
+        status="pending",
     )
 
     db.add(order)

@@ -56,7 +56,14 @@ def get_shipping_rates(
             detail="Postal code alamat belum tersedia",
         )
 
-    # 4. Siapkan item untuk Biteship
+    # 4. Pastikan order tidak pickup
+    if order.fulfillment_method == "pickup":
+        raise HTTPException(
+            status_code=400,
+            detail="Pesanan pickup tidak membutuhkan ongkos kirim",
+        )
+
+    # 5. Siapkan item untuk Biteship
     items = []
 
     for order_item in order.items:
@@ -70,7 +77,7 @@ def get_shipping_rates(
             "quantity": order_item.quantity,
         })
 
-    # 5. Request shipping rates ke Biteship
+    # 6. Request shipping rates ke Biteship
     try:
         rates = get_courier_rates(
             destination_postal_code=int(address.postal_code),
@@ -82,7 +89,7 @@ def get_shipping_rates(
             detail=str(e),
         )
 
-    # 6. Return response Biteship
+    # 7. Return response Biteship
     return {
         "order_id": order.id,
         "order_code": order.order_code,
@@ -111,6 +118,13 @@ def select_shipping(
         raise HTTPException(
             status_code=404,
             detail="Order tidak ditemukan",
+        )
+
+    
+    if order.fulfillment_method == "pickup":
+        raise HTTPException(
+            status_code=400,
+            detail="Pesanan pickup tidak membutuhkan ongkos kirim",
         )
 
     # 2. Shipping hanya boleh dipilih sebelum pembayaran
@@ -182,6 +196,7 @@ def select_shipping(
 
 
 @router.post("/create/{order_id}")
+
 def create_shipping_order(
     order_id: int,
     db: Session = Depends(get_db),
@@ -203,10 +218,10 @@ def create_shipping_order(
     if order.status != "paid":
         raise HTTPException(
             status_code=400,
-            detail="Order harus sudah dibayar sebelum membuat pengiriman",
+            detail="Order harus sudah dibayar sebelum proses ini",
         )
 
-    # 3. Pastikan ada pembayaran yang approved
+    # 3. Pastikan pembayaran approved
     payment = (
         db.query(Payment)
         .filter(
@@ -222,33 +237,61 @@ def create_shipping_order(
             detail="Pembayaran approved tidak ditemukan",
         )
 
-    # 4. Cari shipment yang sudah dipilih
+    # 4. Pickup tidak perlu booking Biteship
+    if order.fulfillment_method == "pickup":
+        order.shipping_cost = 0
+        order.grand_total = order.total_amount
+
+        db.commit()
+        db.refresh(order)
+
+        return {
+            "message": "Pickup dikonfirmasi. Tidak perlu booking pengiriman.",
+            "order_code": order.order_code,
+            "fulfillment_method": "pickup",
+            "shipping_cost": 0,
+            "grand_total": order.grand_total,
+        }
+
+    # 5. Lanjutkan proses Biteship hanya untuk delivery
+    if order.fulfillment_method != "delivery":
+        raise HTTPException(
+            status_code=400,
+            detail="Metode pemenuhan order tidak valid",
+        )
+
     shipment = (
         db.query(Shipment)
         .filter(Shipment.order_id == order.id)
         .first()
     )
 
-    if not shipment:
+    if not shipment or not shipment.courier or not shipment.service:
         raise HTTPException(
             status_code=400,
             detail="Pilih layanan pengiriman terlebih dahulu",
         )
 
-    if not shipment.courier or not shipment.service:
+    if shipment.shipping_cost != order.shipping_cost:
         raise HTTPException(
             status_code=400,
-            detail="Kurir dan layanan pengiriman belum dipilih",
+            detail="Shipping cost tidak sesuai dengan order",
         )
 
-    # 5. Cegah booking duplikat
+    if order.grand_total != order.total_amount + order.shipping_cost:
+        raise HTTPException(
+            status_code=400,
+            detail="Grand total order tidak valid",
+        )
+
+    # Cegah booking duplikat
     if shipment.biteship_order_id:
         raise HTTPException(
             status_code=409,
             detail="Pengiriman untuk order ini sudah dibuat",
         )
 
-    # 6. Validasi alamat dan item
+    # Validasi alamat tujuan
     if not all([
         order.recipient_name,
         order.phone,
@@ -260,6 +303,47 @@ def create_shipping_order(
             detail="Data alamat penerima belum lengkap",
         )
 
+    # Siapkan alamat dari snapshot order
+    destination = {
+        "name": order.recipient_name,
+        "phone": order.phone,
+        "address": order.address,
+        "postal_code": order.postal_code,
+        "latitude": order.latitude,
+        "longitude": order.longitude,
+    }
+
+    latitude = destination["latitude"]
+    longitude = destination["longitude"]
+
+    if latitude is None or longitude is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Koordinat alamat penerima belum tersedia",
+        )
+
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Koordinat alamat penerima tidak valid",
+        )
+
+    if not (
+        -90 <= latitude <= 90
+        and -180 <= longitude <= 180
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Latitude atau longitude di luar rentang yang valid",
+        )
+
+    destination["latitude"] = latitude
+    destination["longitude"] = longitude
+
+    # Siapkan item untuk Biteship
     items = []
 
     for order_item in order.items:
@@ -268,10 +352,7 @@ def create_shipping_order(
         if not product or not product.weight_grams:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"Berat produk {order_item.product_name} "
-                    "belum tersedia"
-                ),
+                detail=f"Berat produk {order_item.product_name} belum tersedia",
             )
 
         if product.weight_grams <= 0 or order_item.quantity <= 0:
@@ -294,48 +375,7 @@ def create_shipping_order(
             detail="Order tidak memiliki item",
         )
 
-    # 7. Siapkan alamat tujuan dari snapshot order
-    destination = {
-        "name": order.recipient_name,
-        "phone": order.phone,
-        "address": order.address,
-        "postal_code": order.postal_code,
-        "latitude": order.latitude,
-        "longitude": order.longitude,
-    }
-
-    # 7.1 Validasi koordinat tujuan
-    latitude = destination.get("latitude")
-    longitude = destination.get("longitude")
-
-    if latitude is None or longitude is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Koordinat alamat penerima belum tersedia. "
-                "Lengkapi latitude dan longitude alamat pelanggan."
-            ),
-        )
-
-    try:
-        latitude = float(latitude)
-        longitude = float(longitude)
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=400,
-            detail="Koordinat alamat penerima tidak valid",
-        )
-
-    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
-        raise HTTPException(
-            status_code=400,
-            detail="Latitude atau longitude di luar rentang yang valid",
-        )
-
-    destination["latitude"] = latitude
-    destination["longitude"] = longitude
-
-    # 8. Buat booking ke Biteship
+    # Buat booking Biteship
     try:
         result = create_biteship_order(
             order_id=order.order_code,
@@ -350,14 +390,13 @@ def create_shipping_order(
             detail=str(e),
         )
 
-    # 9. Simpan respons Biteship
+    # Simpan hasil booking
     shipment.biteship_order_id = result["id"]
     shipment.tracking_number = (
         result.get("waybill_id")
         or result.get("courier", {}).get("waybill_id")
     )
 
-    # Simpan status yang benar-benar dikembalikan Biteship
     if result.get("status"):
         shipment.status = result["status"]
 
@@ -367,6 +406,7 @@ def create_shipping_order(
     return {
         "message": "Booking pengiriman berhasil dibuat",
         "order_code": order.order_code,
+        "fulfillment_method": "delivery",
         "shipment": {
             "id": shipment.id,
             "biteship_order_id": shipment.biteship_order_id,
