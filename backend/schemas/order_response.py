@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
 from typing import List, Optional
-
+from datetime import datetime
 
 
 class OrderItemResponse(BaseModel):
@@ -37,3 +37,9 @@ class OrderResponse(BaseModel):
     grand_total: int
 
     items: List[OrderItemResponse]
+
+
+class MyOrderResponse(OrderResponse):
+    payment_id: Optional[int] = None
+    payment_status: Optional[str] = None
+    created_at: Optional[datetime] = None

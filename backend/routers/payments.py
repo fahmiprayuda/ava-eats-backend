@@ -395,19 +395,47 @@ def create_gateway_payment(
             "transaction_status"
         )
 
+        # Cek apakah payment lama masih dalam window berlaku (15 menit)
+        is_still_fresh = False
+        if existing_payment.created_at:
+            age_seconds = (datetime.now() - existing_payment.created_at).total_seconds()
+            is_still_fresh = age_seconds < (15 * 60)
+
         # =================================================
-        # 7. MASIH PENDING DI MIDTRANS
+        # 7. MASIH PENDING DI MIDTRANS / BELUM DI-INITIATE
         # =================================================
 
-        if transaction_status == "pending":
+        if transaction_status in ["pending", "not_initiated"]:
 
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Payment sebelumnya masih menunggu "
-                    "pembayaran"
+            if is_still_fresh and existing_payment.gateway_token:
+                # Return payment lama yang masih aktif agar customer bisa melanjutkan pembayaran
+                return {
+                    "payment_id": existing_payment.id,
+                    "order_id": order.id,
+                    "order_code": order.order_code,
+                    "payment_method": existing_payment.payment_method,
+                    "amount": existing_payment.amount,
+                    "status": existing_payment.status,
+                    "payment_url": existing_payment.payment_url,
+                    "gateway_token": existing_payment.gateway_token,
+                    "expires_at": existing_payment.expires_at
+                }
+
+            # Jika sudah expired / lewat waktu, tandai expired agar dibuat transaksi baru
+            existing_payment.status = "expired"
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_EXPIRED",
+                entity_type="payment",
+                entity_id=existing_payment.id,
+                description=(
+                    f"Payment {order.order_code} "
+                    f"expired (lewat batas waktu) saat percobaan pembayaran ulang"
                 )
             )
+            db.flush()
 
         # =================================================
         # 8. SUDAH BERHASIL DIBAYAR

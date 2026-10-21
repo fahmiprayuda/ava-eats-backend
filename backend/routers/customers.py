@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.customer import Customer
 from models.order import Order
+from models.payment import Payment
 from schemas.customer import CustomerRequest, CustomerLoginRequest
-from schemas.order_response import OrderResponse
+from schemas.order_response import MyOrderResponse
 from auth.jwt import create_access_token
 from utils.password import hash_password, verify_password
 from auth.dependencies import get_current_customer
@@ -100,15 +101,31 @@ def get_my_profile(
         "name": current_customer.name
     }
 
-@router.get("/me/orders", response_model=List[OrderResponse])
+@router.get("/me/orders", response_model=List[MyOrderResponse])
 def get_my_orders(
     current_customer: Customer = Depends(get_current_customer),
     db: Session = Depends(get_db)
 ):
-    orders = db.query(Order).filter(
-        Order.customer_id == current_customer.id
-    ).order_by(
-        Order.created_at.desc()
-    ).all()
+    orders = (
+        db.query(Order)
+        .filter(Order.customer_id == current_customer.id)
+        .order_by(Order.created_at.desc())
+        .all()
+    )
+
+    for order in orders:
+        latest_payment = (
+            db.query(Payment)
+            .filter(Payment.order_id == order.id)
+            .order_by(Payment.id.desc())
+            .first()
+        )
+
+        order.payment_id = (
+            latest_payment.id if latest_payment else None
+        )
+        order.payment_status = (
+            latest_payment.status if latest_payment else None
+        )
 
     return orders

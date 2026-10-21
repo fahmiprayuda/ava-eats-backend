@@ -8,27 +8,33 @@ from config.midtrans import (
 )
 
 
+
 def create_snap_transaction(
     order_id: str,
     gross_amount: int,
     customer_name: str,
     customer_phone: str,
-    payment_method: str = "other_qris"
+    payment_method: str = "other_qris",
+    expiry_minutes: int = 5,
 ):
     url = f"{MIDTRANS_BASE_URL}/snap/v1/transactions"
 
     payload = {
         "transaction_details": {
             "order_id": order_id,
-            "gross_amount": gross_amount
+            "gross_amount": gross_amount,
         },
         "customer_details": {
             "first_name": customer_name,
-            "phone": customer_phone
+            "phone": customer_phone,
         },
         "enabled_payments": [
             payment_method
-        ]
+        ],
+        "expiry": {
+            "duration": expiry_minutes,
+            "unit": "minutes",
+        },
     }
 
     response = requests.post(
@@ -37,8 +43,9 @@ def create_snap_transaction(
         auth=(MIDTRANS_SERVER_KEY, ""),
         headers={
             "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+            "Content-Type": "application/json",
+        },
+        timeout=30,
     )
 
     if response.status_code not in [200, 201]:
@@ -47,6 +54,7 @@ def create_snap_transaction(
         )
 
     return response.json()
+
 
 def get_transaction_status(order_id: str):
     url = f"{MIDTRANS_BASE_URL}/v2/{order_id}/status"
@@ -59,9 +67,16 @@ def get_transaction_status(order_id: str):
         }
     )
 
+    if response.status_code == 404:
+        return {
+            "status_code": "404",
+            "transaction_status": "not_initiated",
+            "status_message": "Transaction has not been initiated in Midtrans"
+        }
+
     if response.status_code != 200:
         raise Exception(
-            f"Midtrans status error: {response.text}"
+            f"Midtrans status error ({response.status_code}): {response.text}"
         )
 
     return response.json()
