@@ -1,12 +1,13 @@
 import hmac
 import requests
 import hashlib
+from datetime import datetime
 
 from config.midtrans import (
     MIDTRANS_SERVER_KEY,
-    MIDTRANS_BASE_URL
+    MIDTRANS_SNAP_BASE_URL,
+    MIDTRANS_API_BASE_URL,
 )
-
 
 
 def create_snap_transaction(
@@ -15,9 +16,9 @@ def create_snap_transaction(
     customer_name: str,
     customer_phone: str,
     payment_method: str = "other_qris",
-    expiry_minutes: int = 5,
+    expiry_minutes: int = 15,
 ):
-    url = f"{MIDTRANS_BASE_URL}/snap/v1/transactions"
+    url = f"{MIDTRANS_SNAP_BASE_URL}/snap/v1/transactions"
 
     payload = {
         "transaction_details": {
@@ -57,14 +58,15 @@ def create_snap_transaction(
 
 
 def get_transaction_status(order_id: str):
-    url = f"{MIDTRANS_BASE_URL}/v2/{order_id}/status"
+    url = f"{MIDTRANS_API_BASE_URL}/v2/{order_id}/status"
 
     response = requests.get(
         url,
         auth=(MIDTRANS_SERVER_KEY, ""),
         headers={
             "Accept": "application/json"
-        }
+        },
+        timeout=10,
     )
 
     if response.status_code == 404:
@@ -103,3 +105,59 @@ def verify_midtrans_signature(
         calculated_signature,
         signature_key
     )
+
+
+def sync_payment_status(db, payment, order=None):
+    """
+    Sinkronisasi status transaksi dari Midtrans ke database secara real-time.
+    Berguna ketika webhook belum diterima (misal di localhost/development)
+    atau saat user me-refresh halaman order/checkout.
+    """
+    if not payment or payment.gateway != "midtrans" or not payment.gateway_order_id:
+        return payment
+
+    # Jika sudah status final, tidak perlu query Midtrans lagi
+    if payment.status in ["approved", "expired", "rejected"]:
+        return payment
+
+    try:
+        status_data = get_transaction_status(payment.gateway_order_id)
+        tx_status = status_data.get("transaction_status")
+
+        if tx_status in ["settlement", "capture"]:
+            fraud = status_data.get("fraud_status")
+            if not fraud or fraud == "accept":
+                payment.status = "approved"
+                payment.verified_at = datetime.now()
+                payment.gateway_transaction_id = (
+                    status_data.get("transaction_id") or payment.gateway_transaction_id
+                )
+
+                # Update order status jika belum paid
+                if not order:
+                    from models.order import Order
+                    order = db.query(Order).filter(Order.id == payment.order_id).first()
+
+                if order and order.status != "cancelled":
+                    order.status = "paid"
+
+                db.commit()
+
+        elif tx_status == "expire":
+            payment.status = "expired"
+            db.commit()
+
+        elif tx_status in ["deny", "cancel", "failure"]:
+            payment.status = "rejected"
+            db.commit()
+
+        elif tx_status in ["not_initiated", "pending"]:
+            # Jika sudah lebih dari 15 menit, tandai expired
+            if payment.created_at and (datetime.now() - payment.created_at).total_seconds() > (15 * 60):
+                payment.status = "expired"
+                db.commit()
+
+    except Exception as e:
+        print(f"Warning: gagal sync status Midtrans untuk payment {payment.id}: {e}")
+
+    return payment

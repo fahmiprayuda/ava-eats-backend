@@ -12,6 +12,7 @@ from schemas.order_response import MyOrderResponse
 from auth.jwt import create_access_token
 from utils.password import hash_password, verify_password
 from auth.dependencies import get_current_customer
+from services.midtrans import sync_payment_status
 
 
 router = APIRouter(
@@ -120,6 +121,9 @@ def get_my_orders(
             .order_by(Payment.id.desc())
             .first()
         )
+
+        if latest_payment and latest_payment.status == "pending":
+            latest_payment = sync_payment_status(db, latest_payment, order)
 
         order.payment_id = (
             latest_payment.id if latest_payment else None

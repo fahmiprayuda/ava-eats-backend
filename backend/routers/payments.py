@@ -13,7 +13,7 @@ from schemas.payment import PaymentRequest, PaymentVerifyRequest, GatewayPayment
 from schemas.payment_response import PaymentResponse, GatewayPaymentResponse
 from auth.dependencies import get_current_customer, require_admin
 from utils.audit import create_audit_log
-from services.midtrans import create_snap_transaction, get_transaction_status
+from services.midtrans import create_snap_transaction, get_transaction_status, sync_payment_status
 
 router = APIRouter(
     prefix="/api/payments",
@@ -68,6 +68,10 @@ def get_order_payments(
     ).order_by(
         Payment.created_at.desc()
     ).all()
+
+    for p in payments:
+        if p.status == "pending":
+            sync_payment_status(db, p, order)
 
     return payments
 

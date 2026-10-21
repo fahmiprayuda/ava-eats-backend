@@ -22,6 +22,10 @@ if not MIDTRANS_CLIENT_KEY:
     )
 
 if MIDTRANS_IS_PRODUCTION:
+    MIDTRANS_SNAP_BASE_URL = "https://app.midtrans.com"
+    MIDTRANS_API_BASE_URL = "https://api.midtrans.com"
     MIDTRANS_BASE_URL = "https://app.midtrans.com"
 else:
+    MIDTRANS_SNAP_BASE_URL = "https://app.sandbox.midtrans.com"
+    MIDTRANS_API_BASE_URL = "https://api.sandbox.midtrans.com"
     MIDTRANS_BASE_URL = "https://app.sandbox.midtrans.com"
