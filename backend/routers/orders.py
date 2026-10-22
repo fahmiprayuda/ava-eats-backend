@@ -26,6 +26,7 @@ from auth.dependencies import get_current_customer, require_admin
 
 from utils.audit import create_audit_log
 from services.midtrans import get_transaction_status
+from services.whatsapp import notify_order_ready_pickup, notify_order_refunded
 
 
 router = APIRouter(
@@ -504,6 +505,12 @@ def update_order_status(
         elif status_val == "cancelled":
             order.shipment.status = "cancelled"
 
+    if status_val == "delivered" and (order.fulfillment_method or order.order_type) == "pickup":
+        try:
+            notify_order_ready_pickup(order, order.customer)
+        except Exception as wa_err:
+            print(f"[WA Error notify_order_ready_pickup] {wa_err}")
+
     admin_display = getattr(current_admin, "name", None) or getattr(current_admin, "username", "Admin")
 
     # Penanganan khusus jika order dibatalkan (cancelled)
@@ -656,5 +663,10 @@ def confirm_order_refund(
 
     db.commit()
     db.refresh(order)
+
+    try:
+        notify_order_refunded(order, order.customer)
+    except Exception as wa_err:
+        print(f"[WA Error notify_order_refunded] {wa_err}")
 
     return order

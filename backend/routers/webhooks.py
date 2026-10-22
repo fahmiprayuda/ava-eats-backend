@@ -18,6 +18,7 @@ from config.biteship import (
 )
 from models.shipment import Shipment
 from datetime import datetime
+from services.whatsapp import notify_order_paid, notify_order_shipped
 
 router = APIRouter(
     prefix="/api/webhooks",
@@ -278,6 +279,19 @@ def biteship_webhook(
                         ),
                     )
 
+                    try:
+                        notify_order_shipped(
+                            order=order,
+                            customer=order.customer,
+                            tracking_number=shipment.tracking_number,
+                            courier_name=shipment.courier,
+                            tracking_url=shipment.tracking_url,
+                            driver_name=shipment.driver_name,
+                            driver_phone=shipment.driver_phone,
+                        )
+                    except Exception as wa_err:
+                        print(f"[WA Error notify_order_shipped] {wa_err}")
+
                 if current_status == "delivered":
                     if shipment.delivered_at is None:
                         shipment.delivered_at = datetime.now()
@@ -487,6 +501,10 @@ def midtrans_webhook(
 
         else:
             order.status = "paid"
+            try:
+                notify_order_paid(order, order.customer, order.items)
+            except Exception as wa_err:
+                print(f"[WA Error notify_order_paid] {wa_err}")
 
 
     elif transaction_status == "pending":

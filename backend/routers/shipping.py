@@ -13,6 +13,7 @@ from schemas.shipping import ShippingSelectRequest, CalculateShippingRatesReques
 
 from services.biteship import get_courier_rates, create_biteship_order
 from utils.audit import create_audit_log
+from services.whatsapp import notify_order_shipped
 
 
 router = APIRouter(
@@ -595,6 +596,19 @@ def simulate_shipping_assignment(
                 f"Status pesanan otomatis berubah dari '{old_status}' ke 'delivered' (Dalam Pengiriman)."
             ),
         )
+
+        try:
+            notify_order_shipped(
+                order=order,
+                customer=order.customer,
+                tracking_number=shipment.tracking_number,
+                courier_name=shipment.courier,
+                tracking_url=shipment.tracking_url,
+                driver_name=shipment.driver_name,
+                driver_phone=shipment.driver_phone,
+            )
+        except Exception as wa_err:
+            print(f"[WA Error notify_order_shipped simulation] {wa_err}")
 
     db.commit()
     db.refresh(shipment)
