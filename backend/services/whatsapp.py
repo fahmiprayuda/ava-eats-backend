@@ -71,9 +71,11 @@ def send_whatsapp_message(target_phone: str, message: str) -> bool:
             )
             res_json = response.json() if response.status_code == 200 else {}
             if response.status_code == 200 and res_json.get("status"):
+                print(f"✅ [WA Fonnte] Berhasil terkirim ke {normalized} | Target: {target_phone}")
                 logger.info(f"[WA Fonnte] Berhasil terkirim ke {normalized}")
                 return True
             else:
+                print(f"❌ [WA Fonnte] Gagal kirim ke {normalized}: {response.text}")
                 logger.error(f"[WA Fonnte] Gagal kirim ke {normalized}: {response.text}")
                 return False
 
