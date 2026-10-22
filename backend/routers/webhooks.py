@@ -131,7 +131,7 @@ def biteship_webhook(
     }
 
     try:
-        # 5. Sinkronisasi nomor resi
+        # 5. Sinkronisasi nomor resi & live tracking info
         if event in ["order.waybill_id", "order.status"]:
             waybill = (
                 payload.get("courier_waybill_id")
@@ -141,6 +141,40 @@ def biteship_webhook(
             if waybill and shipment.tracking_number != waybill:
                 shipment.tracking_number = waybill
                 changes.append("Nomor resi diperbarui")
+
+            # Sinkronisasi live tracking & data driver (Gojek, Grab, Lalamove, Paxel)
+            courier_info = payload.get("courier", {})
+            tracking_link = (
+                payload.get("courier_tracking_link")
+                or payload.get("tracking_url")
+                or (courier_info.get("link") if isinstance(courier_info, dict) else None)
+            )
+            if tracking_link:
+                shipment.tracking_url = tracking_link
+
+            driver_name = (
+                payload.get("courier_driver_name")
+                or payload.get("driver_name")
+                or (courier_info.get("driver_name") if isinstance(courier_info, dict) else None)
+            )
+            if driver_name:
+                shipment.driver_name = driver_name
+
+            driver_phone = (
+                payload.get("courier_driver_phone")
+                or payload.get("driver_phone")
+                or (courier_info.get("driver_phone") if isinstance(courier_info, dict) else None)
+            )
+            if driver_phone:
+                shipment.driver_phone = driver_phone
+
+            driver_plate = (
+                payload.get("courier_driver_plate_number")
+                or payload.get("driver_plate_number")
+                or (courier_info.get("driver_plate_number") if isinstance(courier_info, dict) else None)
+            )
+            if driver_plate:
+                shipment.driver_plate_number = driver_plate
 
         # 6. Proses status pengiriman
         if event == "order.status":
@@ -221,6 +255,29 @@ def biteship_webhook(
                 } and shipment.shipped_at is None:
                     shipment.shipped_at = datetime.now()
 
+                # Status kurir sedang jalan / pickup otomatis mengubah status order ke delivered ("Dalam Pengiriman")
+                if current_status in {
+                    "picked",
+                    "in_transit",
+                    "dropping_off",
+                    "delivering",
+                } and order.status in {"paid", "processing"}:
+                    old_order_status = order.status
+                    order.status = "delivered"
+                    changes.append("Status order otomatis berubah ke 'delivered' (kurir mengambil paket)")
+                    create_audit_log(
+                        db=db,
+                        user_type="system",
+                        user_id=0,
+                        action="ORDER_STATUS_UPDATED",
+                        entity_type="order",
+                        entity_id=order.id,
+                        description=(
+                            f"Kurir telah mengambil paket untuk order {order.order_code}. "
+                            f"Status pesanan otomatis berubah dari '{old_order_status}' ke 'delivered' (Dalam Pengiriman)."
+                        ),
+                    )
+
                 if current_status == "delivered":
                     if shipment.delivered_at is None:
                         shipment.delivered_at = datetime.now()
@@ -228,7 +285,21 @@ def biteship_webhook(
                     # Order yang dibatalkan tidak boleh
                     # otomatis diaktifkan kembali.
                     if order.status != "cancelled":
-                        order.status = "done"
+                        old_order_status = order.status
+                        order.status = "completed"
+                        changes.append("Status order otomatis berubah ke 'completed' (paket telah tiba)")
+                        create_audit_log(
+                            db=db,
+                            user_type="system",
+                            user_id=0,
+                            action="ORDER_STATUS_UPDATED",
+                            entity_type="order",
+                            entity_id=order.id,
+                            description=(
+                                f"Kurir telah mengantarkan paket untuk order {order.order_code}. "
+                                f"Status pesanan otomatis berubah dari '{old_order_status}' ke 'completed' (Selesai)."
+                            ),
+                        )
 
         # 7. Event harga diterima, tetapi belum mengubah
         # ongkir atau tagihan pelanggan secara otomatis.

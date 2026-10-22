@@ -36,6 +36,11 @@ class Order(Base):
     shipping_cost = Column(Integer, nullable=False, default=0)
     grand_total = Column(Integer, nullable=False, default=0)
     status = Column(String(30),nullable=False, default="pending")
+    cancellation_reason = Column(String(255), nullable=True)
+    refund_status = Column(String(30), nullable=True)
+    refund_note = Column(String(255), nullable=True)
+    refund_proof_url = Column(String(255), nullable=True)
+    refunded_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime,server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

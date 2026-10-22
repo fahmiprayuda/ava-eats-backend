@@ -23,6 +23,12 @@ class Shipment(Base):
     status = Column(String(30), nullable=False, default="pending")
     shipping_cost = Column(Integer, nullable=True)
 
+    tracking_url = Column(String(500), nullable=True)
+    driver_name = Column(String(100), nullable=True)
+    driver_phone = Column(String(50), nullable=True)
+    driver_plate_number = Column(String(50), nullable=True)
+    driver_photo_url = Column(String(500), nullable=True)
+
     shipped_at = Column(DateTime, nullable=True)
     delivered_at = Column( DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

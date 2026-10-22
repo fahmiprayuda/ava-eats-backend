@@ -47,8 +47,19 @@ def add_customer_address(
             detail="Anda tidak memiliki akses untuk menambahkan alamat ini",
         )
 
-    # 3. Cari koordinat otomatis menggunakan Nominatim
-    try:
+    # 3. Cari atau gunakan koordinat
+    if (
+        address_request.latitude is not None
+        and address_request.longitude is not None
+        and -90 <= address_request.latitude <= 90
+        and -180 <= address_request.longitude <= 180
+        and not (address_request.latitude == 0 and address_request.longitude == 0)
+    ):
+        coordinates = {
+            "latitude": float(address_request.latitude),
+            "longitude": float(address_request.longitude),
+        }
+    else:
         coordinates = geocode_address(
             address=address_request.address,
             district=address_request.district,
@@ -56,11 +67,6 @@ def add_customer_address(
             province=address_request.province,
             postal_code=address_request.postal_code,
         )
-    except GeocodingError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=str(exc),
-        ) from exc
 
 
 
@@ -238,7 +244,19 @@ def update_address(
         for item in old_default:
             item.is_default = False
 
-    try:
+    # 4. Koordinat
+    if (
+        address.latitude is not None
+        and address.longitude is not None
+        and -90 <= address.latitude <= 90
+        and -180 <= address.longitude <= 180
+        and not (address.latitude == 0 and address.longitude == 0)
+    ):
+        coordinates = {
+            "latitude": float(address.latitude),
+            "longitude": float(address.longitude),
+        }
+    else:
         coordinates = geocode_address(
             address=address.address,
             district=address.district,
@@ -246,11 +264,6 @@ def update_address(
             province=address.province,
             postal_code=address.postal_code,
         )
-    except GeocodingError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=str(exc),
-        ) from exc
 
     # 4. Update data
     existing_address.label = address.label

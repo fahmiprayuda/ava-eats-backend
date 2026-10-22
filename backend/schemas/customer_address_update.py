@@ -10,4 +10,6 @@ class CustomerAddressUpdate(BaseModel):
     city: str
     district: str
     postal_code: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     is_default: bool = False

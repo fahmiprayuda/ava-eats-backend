@@ -1,8 +1,10 @@
 import os
+import shutil
+import uuid
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -14,10 +16,11 @@ from models.product import Product
 from models.order import Order
 from models.order_item import OrderItem
 from models.payment import Payment
+from models.shipment import Shipment
 
 from schemas.order import OrderRequest
 from schemas.order_response import OrderResponse
-from schemas.order_status import OrderStatusRequest
+from schemas.order_status import OrderStatusRequest, OrderRefundRequest
 
 from auth.dependencies import get_current_customer, require_admin
 
@@ -181,6 +184,12 @@ def create_order(
             os.getenv("STORE_LONGITUDE", "106.87384403716149")
         )
 
+    shipping_cost = 0
+    if fulfillment_method == "delivery" and data.shipping_cost:
+        shipping_cost = max(0, int(data.shipping_cost))
+
+    grand_total = total_amount + shipping_cost
+
     order = Order(
         order_code=order_code,
         customer_id=current_customer.id,
@@ -197,8 +206,8 @@ def create_order(
         longitude=longitude,
         notes=data.notes,
         total_amount=total_amount,
-        shipping_cost=0,
-        grand_total=total_amount,
+        shipping_cost=shipping_cost,
+        grand_total=grand_total,
         status="pending",
     )
 
@@ -210,6 +219,18 @@ def create_order(
     print("Order ID:", order.id)
     print("Order latitude:", repr(order.latitude))
     print("Order longitude:", repr(order.longitude))
+
+    # Jika delivery dan kurir sudah dipilih di checkout, otomatis buat record Shipment
+    if fulfillment_method == "delivery" and data.courier_code and data.service_code:
+        shipment = Shipment(
+            order_id=order.id,
+            courier=data.courier_code,
+            service=data.service_code,
+            shipping_cost=shipping_cost,
+            status="pending",
+        )
+        db.add(shipment)
+        db.flush()
 
     # 7. Create order items + kurangi stock
     for item_data in order_items_data:
@@ -449,27 +470,75 @@ def update_order_status(
         )
 
     # 2. Cek perpindahan status
+    status_val = data.status.value if hasattr(data.status, "value") else str(data.status)
+
     allowed_transitions = {
-        "pending": ["paid"],
-        "paid": ["done"],
+        "pending": ["paid", "cancelled"],
+        "paid": ["processing", "delivered", "completed", "done", "cancelled"],
+        "processing": ["delivered", "completed", "done", "cancelled"],
+        "delivered": ["completed", "done", "cancelled"],
+        "completed": [],
         "done": [],
         "cancelled": []
     }
 
-    if data.status not in allowed_transitions.get(
-        order.status,
-        []
-    ):
+    if status_val not in allowed_transitions.get(order.status, []):
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Order dengan status '{order.status}' "
-                f"tidak bisa diubah menjadi '{data.status}'"
+                f"tidak bisa diubah menjadi '{status_val}'"
             )
         )
 
+    old_status = order.status
     # 3. Update status
-    order.status = data.status
+    order.status = status_val
+
+    # Sinkronisasi status shipment jika ada
+    if order.shipment:
+        if status_val == "delivered":
+            order.shipment.status = "delivering"
+        elif status_val in ["completed", "done"]:
+            order.shipment.status = "delivered"
+        elif status_val == "cancelled":
+            order.shipment.status = "cancelled"
+
+    admin_display = getattr(current_admin, "name", None) or getattr(current_admin, "username", "Admin")
+
+    # Penanganan khusus jika order dibatalkan (cancelled)
+    if status_val == "cancelled":
+        order.cancellation_reason = (
+            data.cancellation_reason
+            or "Dibatalkan oleh Admin"
+        )
+        # Kembalikan stok produk
+        for item in order.items:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if product:
+                product.stock += item.quantity
+
+        was_paid = old_status in ["paid", "processing", "delivered"]
+        if was_paid:
+            order.refund_status = "refund_pending"
+            order.refund_note = data.refund_note or "Menunggu transfer pengembalian dana dari Admin"
+            audit_description = (
+                f"Admin {admin_display} membatalkan pesanan {order.order_code} "
+                f"dari status '{old_status}'. Alasan: '{order.cancellation_reason}'. "
+                f"Stok produk dikembalikan. Status refund: REFUND_PENDING (Rp {order.grand_total:,})."
+            )
+        else:
+            order.refund_status = "not_applicable"
+            audit_description = (
+                f"Admin {admin_display} membatalkan pesanan {order.order_code} "
+                f"dari status '{old_status}'. Alasan: '{order.cancellation_reason}'. "
+                f"Stok produk dikembalikan."
+            )
+    else:
+        audit_description = (
+            f"Admin {admin_display} mengubah status pesanan {order.order_code} "
+            f"dari '{old_status}' menjadi '{status_val}'"
+        )
 
     # 4. Audit trail
     create_audit_log(
@@ -479,14 +548,112 @@ def update_order_status(
         action="ORDER_STATUS_UPDATED",
         entity_type="Order",
         entity_id=order.id,
-        description=(
-            f"Order {order.order_code} "
-            f"status changed to {data.status} "
-            f"by admin {current_admin.name}"
-        )
+        description=audit_description,
     )
 
     # 5. Simpan
+    db.commit()
+    db.refresh(order)
+
+    return order
+
+
+UPLOAD_REFUNDS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "uploads",
+    "refunds"
+)
+
+
+@router.post("/upload-refund-proof")
+def upload_refund_proof(
+    file: UploadFile = File(...),
+    current_admin: Admin = Depends(require_admin)
+):
+    """
+    Endpoint bagi Admin untuk mengunggah foto / screenshot bukti transfer refund.
+    File disimpan di folder backend/uploads/refunds.
+    """
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail="File harus berformat gambar (JPG, PNG, WEBP, GIF)."
+        )
+
+    os.makedirs(UPLOAD_REFUNDS_DIR, exist_ok=True)
+
+    ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".jpg"
+    if not ext or ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
+        ext = ".jpg"
+
+    unique_filename = f"refund_{uuid.uuid4().hex[:12]}_{int(datetime.now().timestamp())}{ext}"
+    destination_path = os.path.join(UPLOAD_REFUNDS_DIR, unique_filename)
+
+    with open(destination_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {
+        "message": "Bukti transfer refund berhasil diunggah",
+        "proof_url": f"/uploads/refunds/{unique_filename}"
+    }
+
+
+@router.put("/{order_id}/refund", response_model=OrderResponse)
+def confirm_order_refund(
+    order_id: int,
+    data: OrderRefundRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(require_admin),
+):
+    """
+    Endpoint bagi Admin untuk mengonfirmasi bahwa dana (refund)
+    telah berhasil ditransfer kembali ke rekening/e-wallet pelanggan.
+    """
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order tidak ditemukan",
+        )
+
+    if order.status != "cancelled":
+        raise HTTPException(
+            status_code=400,
+            detail="Hanya pesanan yang dibatalkan yang dapat diproses refund",
+        )
+
+    if order.refund_status == "refunded":
+        raise HTTPException(
+            status_code=400,
+            detail="Pesanan ini sudah ditandai selesai refund",
+        )
+
+    order.refund_status = "refunded"
+    order.refund_note = (
+        data.refund_note
+        or "Dana berhasil ditransfer kembali ke pelanggan"
+    )
+    if data.refund_proof_url:
+        order.refund_proof_url = data.refund_proof_url
+
+    order.refunded_at = datetime.now()
+
+    admin_display = getattr(current_admin, "name", None) or getattr(current_admin, "username", "Admin")
+
+    create_audit_log(
+        db=db,
+        user_type="admin",
+        user_id=current_admin.id,
+        action="ORDER_REFUND_COMPLETED",
+        entity_type="Order",
+        entity_id=order.id,
+        description=(
+            f"Admin {admin_display} mengonfirmasi pengembalian dana (refund) sebesar Rp {order.grand_total:,} "
+            f"untuk pesanan {order.order_code} telah selesai. Catatan: '{order.refund_note}'"
+            + (f" (Bukti transfer: {order.refund_proof_url})" if order.refund_proof_url else "")
+        ),
+    )
+
     db.commit()
     db.refresh(order)
 

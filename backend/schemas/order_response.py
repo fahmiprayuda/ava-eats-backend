@@ -36,10 +36,30 @@ class OrderResponse(BaseModel):
     shipping_cost: int
     grand_total: int
 
+    cancellation_reason: Optional[str] = None
+    refund_status: Optional[str] = None
+    refund_note: Optional[str] = None
+    refund_proof_url: Optional[str] = None
+    refunded_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
     items: List[OrderItemResponse]
+
+    class Config:
+        from_attributes = True
+        orm_mode = True
 
 
 class MyOrderResponse(OrderResponse):
     payment_id: Optional[int] = None
     payment_status: Optional[str] = None
     created_at: Optional[datetime] = None
+    courier: Optional[str] = None
+    courier_service: Optional[str] = None
+    shipment_status: Optional[str] = None
+    tracking_number: Optional[str] = None
+    tracking_url: Optional[str] = None
+    driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
+    driver_plate_number: Optional[str] = None
+    driver_photo_url: Optional[str] = None

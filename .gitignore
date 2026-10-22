@@ -8,5 +8,9 @@ venv/
 __pycache__/
 *.pyc
 
+# Uploads (ignore uploaded media files, keep directory structure)
+backend/uploads/*
+!backend/uploads/**/.gitkeep
+
 # macOS
 .DS_Store

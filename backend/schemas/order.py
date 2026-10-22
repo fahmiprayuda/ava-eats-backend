@@ -14,3 +14,6 @@ class OrderRequest(BaseModel):
     items: list[OrderItemRequest]
     notes: Optional[str] = None
     payment_method: Optional[str] = None
+    courier_code: Optional[str] = None
+    service_code: Optional[str] = None
+    shipping_cost: Optional[int] = 0
