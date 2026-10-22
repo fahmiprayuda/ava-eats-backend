@@ -209,6 +209,7 @@ def create_order(
         total_amount=total_amount,
         shipping_cost=shipping_cost,
         grand_total=grand_total,
+        notify_whatsapp=data.notify_whatsapp if data.notify_whatsapp is not None else True,
         status="pending",
     )
 

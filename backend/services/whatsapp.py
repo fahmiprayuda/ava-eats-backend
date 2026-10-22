@@ -120,19 +120,23 @@ def notify_order_paid(order, customer=None, items=None):
     fulfillment = "🛵 Pengiriman Kurir" if (getattr(order, "fulfillment_method", "delivery") == "delivery") else "🛍️ Ambil di Outlet (Pickup)"
     tracking_url = f"{FRONTEND_BASE_URL}/orders"
 
-    # 1. Pesan ke Customer
-    customer_msg = (
-        f"🍱 *PESANAN DIKONFIRMASI - {STORE_NAME.upper()}*\n\n"
-        f"Hai Moms *{customer_name}*, terima kasih sudah memesan di Ava Eats! ❤️\n"
-        f"Pembayaran untuk pesanan *#{order_code}* sebesar *Rp {grand_total:,.0f}* telah kami terima dengan sukses.\n\n"
-        f"✨ *Status Saat Ini*: Sedang Disiapkan oleh tim Ava Eats (Frozen food & Ice Pack berkualitas prima).\n"
-        f"📦 *Metode*: {fulfillment}\n\n"
-        f"Moms bisa memantau status pesanan secara real-time di:\n"
-        f"👉 {tracking_url}\n\n"
-        f"_Homemade with love for your little one_\n"
-        f"*{STORE_NAME}*"
-    )
-    send_whatsapp_message(customer_phone, customer_msg)
+    # 1. Pesan ke Customer (Hanya jika customer opt-in WhatsApp)
+    customer_opt_in = getattr(order, "notify_whatsapp", True)
+    if customer_opt_in:
+        customer_msg = (
+            f"🍱 *PESANAN DIKONFIRMASI - {STORE_NAME.upper()}*\n\n"
+            f"Hai Moms *{customer_name}*, terima kasih sudah memesan di Ava Eats! ❤️\n"
+            f"Pembayaran untuk pesanan *#{order_code}* sebesar *Rp {grand_total:,.0f}* telah kami terima dengan sukses.\n\n"
+            f"✨ *Status Saat Ini*: Sedang Disiapkan oleh tim Ava Eats (Frozen food & Ice Pack berkualitas prima).\n"
+            f"📦 *Metode*: {fulfillment}\n\n"
+            f"Moms bisa memantau status pesanan secara real-time di:\n"
+            f"👉 {tracking_url}\n\n"
+            f"_Homemade with love for your little one_\n"
+            f"*{STORE_NAME}*"
+        )
+        send_whatsapp_message(customer_phone, customer_msg)
+    else:
+        logger.info(f"[WA] Customer #{order_code} memilih tidak menerima notifikasi WhatsApp (Opt-out).")
 
     # 2. Pesan Alert ke Admin
     admin_phone = WHATSAPP_ADMIN_PHONE
@@ -168,9 +172,13 @@ def notify_order_shipped(order, customer=None, tracking_number=None, courier_nam
     """
     Trigger saat pesanan di-pickup oleh kurir pengiriman (GoSend / Grab / Paxel)
     """
+    order_code = getattr(order, "order_code", None) or f"ORDER-{order.id}"
+    if not getattr(order, "notify_whatsapp", True):
+        logger.info(f"[WA] Customer #{order_code} opt-out notifikasi WhatsApp. Notifikasi pengiriman dilewati.")
+        return False
+
     customer_phone = getattr(order, "phone", None) or getattr(customer, "phone", "")
     customer_name = getattr(order, "customer_name", None) or getattr(customer, "name", "Moms")
-    order_code = getattr(order, "order_code", None) or f"ORDER-{order.id}"
     courier = courier_name or getattr(order, "courier", "Kurir Ekspedisi")
     resi = tracking_number or getattr(order, "tracking_number", "-")
     track_link = tracking_url or getattr(order, "tracking_url", f"{FRONTEND_BASE_URL}/orders")
@@ -190,16 +198,20 @@ def notify_order_shipped(order, customer=None, tracking_number=None, courier_nam
         f"Terima kasih,\n"
         f"*{STORE_NAME}*"
     )
-    send_whatsapp_message(customer_phone, customer_msg)
+    return send_whatsapp_message(customer_phone, customer_msg)
 
 
 def notify_order_ready_pickup(order, customer=None):
     """
     Trigger saat pesanan pickup mandiri sudah siap diambil di outlet
     """
+    order_code = getattr(order, "order_code", None) or f"ORDER-{order.id}"
+    if not getattr(order, "notify_whatsapp", True):
+        logger.info(f"[WA] Customer #{order_code} opt-out notifikasi WhatsApp. Notifikasi siap pickup dilewati.")
+        return False
+
     customer_phone = getattr(order, "phone", None) or getattr(customer, "phone", "")
     customer_name = getattr(order, "customer_name", None) or getattr(customer, "name", "Moms")
-    order_code = getattr(order, "order_code", None) or f"ORDER-{order.id}"
 
     customer_msg = (
         f"🛍️ *PESANAN SIAP DIAMBIL - {STORE_NAME.upper()}*\n\n"
@@ -213,16 +225,20 @@ def notify_order_ready_pickup(order, customer=None):
         f"Sampai jumpa di outlet!\n"
         f"*{STORE_NAME}*"
     )
-    send_whatsapp_message(customer_phone, customer_msg)
+    return send_whatsapp_message(customer_phone, customer_msg)
 
 
 def notify_order_refunded(order, customer=None):
     """
     Trigger saat proses pengembalian dana (refund) selesai ditransfer admin
     """
+    order_code = getattr(order, "order_code", None) or f"ORDER-{order.id}"
+    if not getattr(order, "notify_whatsapp", True):
+        logger.info(f"[WA] Customer #{order_code} opt-out notifikasi WhatsApp. Notifikasi refund dilewati.")
+        return False
+
     customer_phone = getattr(order, "phone", None) or getattr(customer, "phone", "")
     customer_name = getattr(order, "customer_name", None) or getattr(customer, "name", "Moms")
-    order_code = getattr(order, "order_code", None) or f"ORDER-{order.id}"
     grand_total = getattr(order, "grand_total", None) or getattr(order, "total_amount", 0)
 
     customer_msg = (
@@ -235,4 +251,4 @@ def notify_order_refunded(order, customer=None):
         f"Salam hangat,\n"
         f"*{STORE_NAME}*"
     )
-    send_whatsapp_message(customer_phone, customer_msg)
+    return send_whatsapp_message(customer_phone, customer_msg)

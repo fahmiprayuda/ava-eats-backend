@@ -4,7 +4,8 @@ from sqlalchemy import (
     String,
     DateTime,
     ForeignKey,
-    Float
+    Float,
+    Boolean
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -41,6 +42,7 @@ class Order(Base):
     refund_note = Column(String(255), nullable=True)
     refund_proof_url = Column(String(255), nullable=True)
     refunded_at = Column(DateTime, nullable=True)
+    notify_whatsapp = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime,server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
