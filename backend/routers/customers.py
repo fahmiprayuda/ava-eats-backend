@@ -1,18 +1,29 @@
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
 
 from database import get_db
 from models.customer import Customer
+from models.customer_address import CustomerAddress
+from models.admin import Admin
 from models.order import Order
 from models.payment import Payment
 from models.shipment import Shipment
-from schemas.customer import CustomerRequest, CustomerLoginRequest, CustomerUpdateRequest
+from schemas.customer import (
+    CustomerRequest,
+    CustomerLoginRequest,
+    CustomerUpdateRequest,
+    AdminCustomerCreateRequest,
+    AdminCustomerUpdateRequest,
+    AdminCustomerResponse,
+)
 from schemas.order_response import MyOrderResponse
 from auth.jwt import create_access_token
 from utils.password import hash_password, verify_password
-from auth.dependencies import get_current_customer
+from auth.dependencies import get_current_customer, require_admin, require_super_admin
+from utils.audit import create_audit_log
 from services.midtrans import sync_payment_status
 
 
@@ -234,3 +245,184 @@ def get_my_orders(
             order.driver_photo_url = None
 
     return orders
+
+
+# =========================================================================
+# ADMIN CUSTOMER MANAGEMENT (CRUD)
+# =========================================================================
+
+@router.get("", response_model=List[AdminCustomerResponse])
+def get_all_customers_admin(
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(require_super_admin)
+):
+    query = db.query(Customer)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                Customer.name.ilike(term),
+                Customer.phone.ilike(term)
+            )
+        )
+
+    customers = query.order_by(Customer.id.desc()).offset(offset).limit(limit).all()
+
+    result = []
+    for c in customers:
+        # Hitung total pesanan dan total belanja
+        orders = db.query(Order).filter(Order.customer_id == c.id).all()
+        orders_count = len(orders)
+        total_spent = sum(o.grand_total or o.total_amount or 0 for o in orders if o.status in ["PAID", "PROCESSING", "SHIPPED", "COMPLETED"])
+
+        result.append(
+            AdminCustomerResponse(
+                id=c.id,
+                name=c.name,
+                phone=c.phone,
+                orders_count=orders_count,
+                total_spent=int(total_spent)
+            )
+        )
+
+    return result
+
+
+@router.post("/admin", response_model=AdminCustomerResponse)
+def create_customer_by_admin(
+    data: AdminCustomerCreateRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(require_super_admin)
+):
+    existing = db.query(Customer).filter(Customer.phone == data.phone.strip()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Nomor WhatsApp sudah digunakan oleh customer lain.")
+
+    customer = Customer(
+        phone=data.phone.strip(),
+        name=data.name.strip(),
+        password=hash_password(data.password.strip())
+    )
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+
+    create_audit_log(
+        db=db,
+        user_type="admin",
+        user_id=current_admin.id,
+        action="CREATE",
+        entity_type="customer",
+        entity_id=customer.id,
+        description=f"Pelanggan baru ditambahkan oleh admin: {customer.name} ({customer.phone})"
+    )
+    db.commit()
+
+    return AdminCustomerResponse(
+        id=customer.id,
+        name=customer.name,
+        phone=customer.phone,
+        orders_count=0,
+        total_spent=0
+    )
+
+
+@router.put("/admin/{customer_id}", response_model=AdminCustomerResponse)
+def update_customer_by_admin(
+    customer_id: int,
+    data: AdminCustomerUpdateRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(require_super_admin)
+):
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+
+    changes = []
+    if data.name and data.name.strip() != customer.name:
+        changes.append(f"nama: {customer.name} -> {data.name.strip()}")
+        customer.name = data.name.strip()
+
+    if data.phone and data.phone.strip() != customer.phone:
+        duplicate = db.query(Customer).filter(
+            Customer.phone == data.phone.strip(),
+            Customer.id != customer_id
+        ).first()
+        if duplicate:
+            raise HTTPException(status_code=400, detail="Nomor WhatsApp sudah digunakan pelanggan lain")
+        changes.append(f"no hp: {customer.phone} -> {data.phone.strip()}")
+        customer.phone = data.phone.strip()
+
+    if data.password and data.password.strip():
+        customer.password = hash_password(data.password.strip())
+        changes.append("password di-reset")
+
+    db.commit()
+    db.refresh(customer)
+
+    if changes:
+        create_audit_log(
+            db=db,
+            user_type="admin",
+            user_id=current_admin.id,
+            action="UPDATE",
+            entity_type="customer",
+            entity_id=customer.id,
+            description=f"Data pelanggan {customer.name} ({customer.phone}) diperbarui: {', '.join(changes)}"
+        )
+        db.commit()
+
+    orders = db.query(Order).filter(Order.customer_id == customer.id).all()
+    orders_count = len(orders)
+    total_spent = sum(o.grand_total or o.total_amount or 0 for o in orders if o.status in ["PAID", "PROCESSING", "SHIPPED", "COMPLETED"])
+
+    return AdminCustomerResponse(
+        id=customer.id,
+        name=customer.name,
+        phone=customer.phone,
+        orders_count=orders_count,
+        total_spent=int(total_spent)
+    )
+
+
+@router.delete("/admin/{customer_id}")
+def delete_customer_by_admin(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(require_super_admin)
+):
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+
+    order_count = db.query(Order).filter(Order.customer_id == customer_id).count()
+    if order_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pelanggan tidak dapat dihapus karena memiliki {order_count} riwayat pesanan (menjaga integritas data finansial)."
+        )
+
+    # Hapus alamat terkait
+    db.query(CustomerAddress).filter(CustomerAddress.customer_id == customer_id).delete()
+
+    deleted_name = customer.name
+    deleted_phone = customer.phone
+
+    db.delete(customer)
+    db.commit()
+
+    create_audit_log(
+        db=db,
+        user_type="admin",
+        user_id=current_admin.id,
+        action="DELETE",
+        entity_type="customer",
+        entity_id=customer_id,
+        description=f"Pelanggan {deleted_name} ({deleted_phone}) dihapus dari sistem."
+    )
+    db.commit()
+
+    return {"message": f"Pelanggan {deleted_name} berhasil dihapus"}

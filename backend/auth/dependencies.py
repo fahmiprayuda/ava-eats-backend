@@ -28,7 +28,7 @@ def get_current_admin(
         admin_id = payload.get("sub")
         role = payload.get("role")
 
-        if role != "admin":
+        if role not in ["admin", "staff"]:
             raise HTTPException(
                 status_code=403,
                 detail="Token bukan milik admin"
@@ -62,10 +62,21 @@ def get_current_admin(
 def require_admin(
     current_admin: Admin = Depends(get_current_admin)
 ):
-    if current_admin.role != "admin":
+    if current_admin.role not in ["admin", "staff"]:
         raise HTTPException(
             status_code=403,
             detail="Anda tidak memiliki izin untuk melakukan tindakan ini"
+        )
+
+    return current_admin
+
+def require_super_admin(
+    current_admin: Admin = Depends(get_current_admin)
+):
+    if current_admin.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Hanya Super Admin yang memiliki hak akses untuk tindakan ini"
         )
 
     return current_admin
