@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models.promo_code import PromoCode, PromoCodeUsage
+from models.promo_code import PromoCode, PromoCodeUsage, PromoCodeCustomer
 from models.customer import Customer
 from models.admin import Admin
 from schemas.promo_code import (
@@ -95,6 +95,20 @@ def validate_promo_code(
             detail=f"Kuota kupon promo '{clean_code}' sudah habis."
         )
 
+    # Cek sasaran khusus pelanggan (targeted promo)
+    if promo.target_type == "specific":
+        if not current_customer:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kupon promo '{clean_code}' khusus untuk pelanggan tertentu. Silakan masuk (login) ke akun Anda terlebih dahulu."
+            )
+        allowed_ids = {tc.customer_id for tc in promo.target_customers}
+        if current_customer.id not in allowed_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maaf Moms, kupon promo '{clean_code}' hanya berlaku untuk pelanggan terpilih."
+            )
+
     # Cek batas pemakaian per customer (jika customer login)
     if current_customer:
         user_usage_count = db.query(PromoCodeUsage).filter(
@@ -153,10 +167,13 @@ def validate_promo_code(
 
 @router.get("/active", response_model=List[PromoCodeResponse])
 def get_active_promos(
+    current_customer: Optional[Customer] = Depends(get_optional_customer),
     db: Session = Depends(get_db)
 ):
     """
-    Daftar kupon promo yang sedang aktif dan dapat digunakan publik.
+    Daftar kupon promo yang sedang aktif.
+    Jika pelanggan login, menampilkan promo publik dan promo khusus miliknya.
+    Jika tidak login, hanya menampilkan promo publik.
     """
     now = datetime.now()
     promos = db.query(PromoCode).filter(
@@ -165,11 +182,22 @@ def get_active_promos(
         (PromoCode.end_date.is_(None) | (PromoCode.end_date >= now)),
     ).order_by(PromoCode.created_at.desc()).all()
 
-    # Filter kupon yang belum habis kuotanya
-    available_promos = [
-        p for p in promos
-        if p.usage_limit is None or p.used_count < p.usage_limit
-    ]
+    available_promos = []
+    for p in promos:
+        # Cek kuota habis
+        if p.usage_limit is not None and p.used_count >= p.usage_limit:
+            continue
+
+        # Cek sasaran khusus pelanggan
+        if p.target_type == "specific":
+            if not current_customer:
+                continue
+            target_ids = {tc.customer_id for tc in p.target_customers}
+            if current_customer.id not in target_ids:
+                continue
+
+        available_promos.append(p)
+
     return available_promos
 
 
@@ -213,8 +241,17 @@ def create_promo_code(
             detail="Diskon persentase tidak boleh lebih dari 100%."
         )
 
+    # Validasi target pelanggan pilihan
+    if data.target_type == "specific":
+        if not data.customer_ids or len(data.customer_ids) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Silakan pilih minimal 1 pelanggan untuk kupon bertarget khusus."
+            )
+
     promo = PromoCode(
         code=clean_code,
+        name=data.name or clean_code,
         description=data.description,
         discount_type=data.discount_type,
         discount_value=data.discount_value,
@@ -225,12 +262,20 @@ def create_promo_code(
         start_date=data.start_date,
         end_date=data.end_date,
         is_active=data.is_active,
+        target_type=data.target_type or "all",
     )
     db.add(promo)
+    db.flush()
+
+    if promo.target_type == "specific" and data.customer_ids:
+        for cid in set(data.customer_ids):
+            db.add(PromoCodeCustomer(promo_code_id=promo.id, customer_id=cid))
+
     db.commit()
     db.refresh(promo)
 
     admin_display = getattr(current_admin, "name", None) or getattr(current_admin, "username", "Admin")
+    target_info_str = f"khusus {len(data.customer_ids)} customer" if promo.target_type == "specific" else "semua customer"
     create_audit_log(
         db=db,
         user_type="admin",
@@ -238,7 +283,7 @@ def create_promo_code(
         action="PROMO_CREATED",
         entity_type="promo_code",
         entity_id=promo.id,
-        description=f"Admin {admin_display} membuat kupon promo baru '{promo.code}' ({promo.discount_type} {promo.discount_value})."
+        description=f"Admin {admin_display} membuat kupon promo baru '{promo.code}' ({promo.discount_type} {promo.discount_value}, target: {target_info_str})."
     )
 
     return promo
@@ -262,6 +307,8 @@ def update_promo_code(
         )
 
     update_dict = data.dict(exclude_unset=True)
+    customer_ids_to_update = update_dict.pop("customer_ids", None)
+
     if "discount_type" in update_dict and update_dict["discount_type"] == "percentage":
         val = update_dict.get("discount_value", promo.discount_value)
         if val > 100:
@@ -272,6 +319,27 @@ def update_promo_code(
 
     for field, val in update_dict.items():
         setattr(promo, field, val)
+
+    # Sinkronisasi target pelanggan
+    if promo.target_type == "specific":
+        if customer_ids_to_update is not None:
+            if len(customer_ids_to_update) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Silakan pilih minimal 1 pelanggan untuk kupon bertarget khusus."
+                )
+            db.query(PromoCodeCustomer).filter(PromoCodeCustomer.promo_code_id == promo.id).delete()
+            for cid in set(customer_ids_to_update):
+                db.add(PromoCodeCustomer(promo_code_id=promo.id, customer_id=cid))
+        else:
+            existing_count = db.query(PromoCodeCustomer).filter(PromoCodeCustomer.promo_code_id == promo.id).count()
+            if existing_count == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Silakan pilih minimal 1 pelanggan untuk kupon bertarget khusus."
+                )
+    elif promo.target_type == "all":
+        db.query(PromoCodeCustomer).filter(PromoCodeCustomer.promo_code_id == promo.id).delete()
 
     db.commit()
     db.refresh(promo)

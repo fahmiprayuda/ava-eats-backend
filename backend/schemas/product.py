@@ -16,3 +16,5 @@ class ProductRequest(BaseModel):
     stock: int = Field(..., ge=0)
 
     is_available: bool = True
+
+    category_id: Optional[int] = None

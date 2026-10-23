@@ -21,6 +21,8 @@ from models import (
     AuditTrail,
     PromoCode,
     PromoCodeUsage,
+    PromoCodeCustomer,
+    Category,
 )
 from utils.password import hash_password
 
@@ -38,6 +40,7 @@ def run_fresh_migration():
             conn.execute(text("SET FOREIGN_KEY_CHECKS = 0;"))
             tables_to_drop = [
                 "promo_code_usages",
+                "promo_code_customers",
                 "shipments",
                 "payments",
                 "order_items",
@@ -47,6 +50,7 @@ def run_fresh_migration():
                 "promo_codes",
                 "customers",
                 "products",
+                "categories",
                 "admins",
             ]
             for table in tables_to_drop:

@@ -229,6 +229,15 @@ def create_order(
                 detail=f"Kuota kupon promo '{clean_code}' sudah habis."
             )
 
+        # Cek sasaran pelanggan khusus
+        if promo.target_type == "specific":
+            target_ids = {tc.customer_id for tc in promo.target_customers}
+            if current_customer.id not in target_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Maaf Moms, kupon promo '{clean_code}' hanya berlaku untuk pelanggan terpilih."
+                )
+
         user_usage_count = db.query(PromoCodeUsage).filter(
             PromoCodeUsage.promo_code_id == promo.id,
             PromoCodeUsage.customer_id == current_customer.id

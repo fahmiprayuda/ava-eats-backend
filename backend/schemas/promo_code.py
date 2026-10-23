@@ -1,10 +1,11 @@
 from datetime import datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
 class PromoCodeBase(BaseModel):
     code: str = Field(..., min_length=3, max_length=50)
+    name: Optional[str] = None
     description: Optional[str] = None
     discount_type: Literal["percentage", "fixed_amount", "shipping_discount"] = "percentage"
     discount_value: int = Field(..., gt=0)
@@ -15,6 +16,8 @@ class PromoCodeBase(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     is_active: bool = True
+    target_type: Literal["all", "specific"] = "all"
+    customer_ids: Optional[List[int]] = None
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
@@ -39,6 +42,7 @@ class PromoCodeCreate(PromoCodeBase):
 
 
 class PromoCodeUpdate(BaseModel):
+    name: Optional[str] = None
     description: Optional[str] = None
     discount_type: Optional[Literal["percentage", "fixed_amount", "shipping_discount"]] = None
     discount_value: Optional[int] = Field(None, gt=0)
@@ -49,6 +53,8 @@ class PromoCodeUpdate(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     is_active: Optional[bool] = None
+    target_type: Optional[Literal["all", "specific"]] = None
+    customer_ids: Optional[List[int]] = None
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
@@ -68,14 +74,27 @@ class PromoCodeUpdate(BaseModel):
         return v
 
 
+class TargetCustomerInfo(BaseModel):
+    id: int
+    name: str
+    phone: str
+
+    class Config:
+        from_attributes = True
+
+
 class PromoCodeResponse(PromoCodeBase):
     id: int
     used_count: int
+    target_type: str = "all"
+    target_customer_ids: List[int] = Field(default_factory=list)
+    target_customers: List[TargetCustomerInfo] = Field(default_factory=list, validation_alias="target_customers_info")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 
 class PromoValidateRequest(BaseModel):

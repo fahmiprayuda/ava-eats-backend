@@ -257,7 +257,7 @@ def get_all_customers_admin(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
-    current_admin: Admin = Depends(require_super_admin)
+    current_admin: Admin = Depends(require_admin)
 ):
     query = db.query(Customer)
     if search and search.strip():

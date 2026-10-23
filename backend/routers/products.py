@@ -71,7 +71,8 @@ def create_product(
         image=data.image,
         weight_grams=data.weight_grams,
         stock=data.stock,
-        is_available=data.is_available
+        is_available=data.is_available,
+        category_id=data.category_id,
     )
 
     db.add(new_product)
@@ -99,7 +100,9 @@ def create_product(
             "image": new_product.image,
             "weight_grams": new_product.weight_grams,
             "stock": new_product.stock,
-            "is_available": new_product.is_available
+            "is_available": new_product.is_available,
+            "category_id": new_product.category_id,
+            "category": new_product.category_name,
         }
     }
 
@@ -119,7 +122,9 @@ def get_products(
                 "image": item.image,
                 "weight_grams": item.weight_grams,
                 "stock": item.stock,
-                "is_available": item.is_available
+                "is_available": item.is_available,
+                "category_id": item.category_id,
+                "category": item.category_name,
             }
             for item in products
         ]
@@ -149,7 +154,9 @@ def get_product(
             "image": product.image,
             "weight_grams": product.weight_grams,
             "stock": product.stock,
-            "is_available": product.is_available
+            "is_available": product.is_available,
+            "category_id": product.category_id,
+            "category": product.category_name,
         }
     }
 
@@ -180,6 +187,8 @@ def update_product(
     existing_product.weight_grams = product.weight_grams
     existing_product.stock = product.stock
     existing_product.is_available = product.is_available
+    if product.category_id is not None:
+        existing_product.category_id = product.category_id
 
     desc_parts = []
     if old_stock != existing_product.stock:
@@ -212,7 +221,9 @@ def update_product(
             "image": existing_product.image,
             "weight_grams": existing_product.weight_grams,
             "stock": existing_product.stock,
-            "is_available": existing_product.is_available
+            "is_available": existing_product.is_available,
+            "category_id": existing_product.category_id,
+            "category": existing_product.category_name,
         }
     }
 

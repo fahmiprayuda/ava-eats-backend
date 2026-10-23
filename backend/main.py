@@ -4,12 +4,42 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from database import engine, Base
-from models import Customer, CustomerAddress, Product, Order, OrderItem, Payment, Admin, AuditTrail, Shipment
+from sqlalchemy import text
+from models import (
+    Customer,
+    CustomerAddress,
+    Product,
+    Order,
+    OrderItem,
+    Payment,
+    Admin,
+    AuditTrail,
+    Shipment,
+    PromoCode,
+    PromoCodeUsage,
+    PromoCodeCustomer,
+    Category,
+)
 
-from routers import customers, addresses, products, orders, payments, admins, auth, webhooks, shipping, promos
+# Migrasi otomatis kolom target_type & name pada promo_codes jika belum ada
+try:
+    with engine.connect() as conn:
+        res = conn.execute(text("SHOW COLUMNS FROM promo_codes LIKE 'target_type';")).fetchone()
+        if not res:
+            conn.execute(text("ALTER TABLE promo_codes ADD COLUMN target_type VARCHAR(20) NOT NULL DEFAULT 'all';"))
+            conn.commit()
 
+        res_name = conn.execute(text("SHOW COLUMNS FROM promo_codes LIKE 'name';")).fetchone()
+        if not res_name:
+            conn.execute(text("ALTER TABLE promo_codes ADD COLUMN name VARCHAR(100) NULL AFTER code;"))
+            conn.execute(text("UPDATE promo_codes SET name = COALESCE(description, code) WHERE name IS NULL;"))
+            conn.commit()
+except Exception as e:
+    print(f"Warning auto-migration promo_codes: {e}")
 
 Base.metadata.create_all(bind=engine)
+
+from routers import customers, addresses, products, orders, payments, admins, auth, webhooks, shipping, promos, categories
 
 app = FastAPI()
 
@@ -47,3 +77,4 @@ app.include_router(webhooks.router)
 app.include_router(shipping.router)
 app.include_router(shipping.router, prefix="/api")
 app.include_router(promos.router)
+app.include_router(categories.router)

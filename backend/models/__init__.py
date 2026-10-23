@@ -7,4 +7,5 @@ from .payment import Payment
 from .admin import Admin
 from .audit_trail import AuditTrail
 from .shipment import Shipment
-from .promo_code import PromoCode, PromoCodeUsage
+from .category import Category
+from .promo_code import PromoCode, PromoCodeUsage, PromoCodeCustomer
