@@ -272,11 +272,17 @@ def get_all_customers_admin(
     customers = query.order_by(Customer.id.desc()).offset(offset).limit(limit).all()
 
     result = []
+    VALID_SPENT_STATUSES = {"paid", "processing", "shipped", "delivered", "completed", "done"}
+
     for c in customers:
-        # Hitung total pesanan dan total belanja
+        # Hitung total pesanan dan total belanja akumulatif yang valid (lunas / selesai)
         orders = db.query(Order).filter(Order.customer_id == c.id).all()
         orders_count = len(orders)
-        total_spent = sum(o.grand_total or o.total_amount or 0 for o in orders if o.status in ["PAID", "PROCESSING", "SHIPPED", "COMPLETED"])
+        total_spent = sum(
+            o.grand_total or o.total_amount or 0
+            for o in orders
+            if str(o.status or "").lower() in VALID_SPENT_STATUSES
+        )
 
         result.append(
             AdminCustomerResponse(
@@ -377,7 +383,12 @@ def update_customer_by_admin(
 
     orders = db.query(Order).filter(Order.customer_id == customer.id).all()
     orders_count = len(orders)
-    total_spent = sum(o.grand_total or o.total_amount or 0 for o in orders if o.status in ["PAID", "PROCESSING", "SHIPPED", "COMPLETED"])
+    VALID_SPENT_STATUSES = {"paid", "processing", "shipped", "delivered", "completed", "done"}
+    total_spent = sum(
+        o.grand_total or o.total_amount or 0
+        for o in orders
+        if str(o.status or "").lower() in VALID_SPENT_STATUSES
+    )
 
     return AdminCustomerResponse(
         id=customer.id,

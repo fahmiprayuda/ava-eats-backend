@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PromoCodeBase(BaseModel):
@@ -15,6 +15,23 @@ class PromoCodeBase(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     is_active: bool = True
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def clean_local_datetime(cls, v):
+        if not v:
+            return None
+        if isinstance(v, str):
+            s = v.replace("Z", "")
+            if "+" in s:
+                s = s.split("+")[0]
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                pass
+        elif isinstance(v, datetime) and v.tzinfo is not None:
+            return v.replace(tzinfo=None)
+        return v
 
 
 class PromoCodeCreate(PromoCodeBase):
@@ -32,6 +49,23 @@ class PromoCodeUpdate(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     is_active: Optional[bool] = None
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def clean_local_datetime_update(cls, v):
+        if not v:
+            return None
+        if isinstance(v, str):
+            s = v.replace("Z", "")
+            if "+" in s:
+                s = s.split("+")[0]
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                pass
+        elif isinstance(v, datetime) and v.tzinfo is not None:
+            return v.replace(tzinfo=None)
+        return v
 
 
 class PromoCodeResponse(PromoCodeBase):
