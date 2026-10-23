@@ -18,4 +18,5 @@ class OrderRequest(BaseModel):
     service_code: Optional[str] = None
     shipping_cost: Optional[int] = 0
     packaging_fee: Optional[int] = 0
+    promo_code: Optional[str] = None
     notify_whatsapp: Optional[bool] = True

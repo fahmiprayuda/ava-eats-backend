@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from database import engine, Base
 from models import Customer, CustomerAddress, Product, Order, OrderItem, Payment, Admin, AuditTrail, Shipment
 
-from routers import customers, addresses, products, orders, payments, admins, auth, webhooks, shipping
+from routers import customers, addresses, products, orders, payments, admins, auth, webhooks, shipping, promos
 
 
 Base.metadata.create_all(bind=engine)
@@ -46,3 +46,4 @@ app.include_router(auth.router)
 app.include_router(webhooks.router)
 app.include_router(shipping.router)
 app.include_router(shipping.router, prefix="/api")
+app.include_router(promos.router)

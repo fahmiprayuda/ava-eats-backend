@@ -19,6 +19,8 @@ from models import (
     Payment,
     Shipment,
     AuditTrail,
+    PromoCode,
+    PromoCodeUsage,
 )
 from utils.password import hash_password
 
@@ -35,12 +37,14 @@ def run_fresh_migration():
         with engine.connect() as conn:
             conn.execute(text("SET FOREIGN_KEY_CHECKS = 0;"))
             tables_to_drop = [
+                "promo_code_usages",
                 "shipments",
                 "payments",
                 "order_items",
                 "orders",
                 "customer_addresses",
                 "audit_trails",
+                "promo_codes",
                 "customers",
                 "products",
                 "admins",
@@ -125,6 +129,48 @@ def run_fresh_migration():
             db.add(p)
         db.commit()
         print(f"✓ {len(seed_products)} Menu makanan favorit berhasil dimasukkan.")
+
+        # 5. Seed Kupon Promo & Voucher Baseline
+        print("\n[5/5] Menyiapkan kupon promo baseline Ava Eats...")
+        seed_promos = [
+            PromoCode(
+                code="MOMSHEBAT",
+                description="Diskon 10% Spesial Moms Hebat (Maksimal Rp 15.000)",
+                discount_type="percentage",
+                discount_value=10,
+                max_discount=15000,
+                min_order_amount=50000,
+                usage_limit=100,
+                usage_limit_per_user=1,
+                is_active=True,
+            ),
+            PromoCode(
+                code="AVABARU",
+                description="Potongan Langsung Rp 10.000 untuk Pelanggan Baru",
+                discount_type="fixed_amount",
+                discount_value=10000,
+                max_discount=None,
+                min_order_amount=75000,
+                usage_limit=50,
+                usage_limit_per_user=1,
+                is_active=True,
+            ),
+            PromoCode(
+                code="BEBASONGKIR",
+                description="Subsidi Potongan Ongkir hingga Rp 10.000",
+                discount_type="shipping_discount",
+                discount_value=10000,
+                max_discount=None,
+                min_order_amount=60000,
+                usage_limit=100,
+                usage_limit_per_user=2,
+                is_active=True,
+            ),
+        ]
+        for promo in seed_promos:
+            db.add(promo)
+        db.commit()
+        print(f"✓ {len(seed_promos)} Kupon promo baseline berhasil dibuat: MOMSHEBAT, AVABARU, BEBASONGKIR.")
 
         # Catat inisialisasi ke audit trail
         init_log = AuditTrail(

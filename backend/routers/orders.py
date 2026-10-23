@@ -17,6 +17,7 @@ from models.order import Order
 from models.order_item import OrderItem
 from models.payment import Payment
 from models.shipment import Shipment
+from models.promo_code import PromoCode, PromoCodeUsage
 
 from schemas.order import OrderRequest
 from schemas.order_response import OrderResponse
@@ -27,6 +28,7 @@ from auth.dependencies import get_current_customer, require_admin
 from utils.audit import create_audit_log
 from services.midtrans import get_transaction_status
 from services.whatsapp import notify_order_ready_pickup, notify_order_refunded
+from routers.promos import calculate_discount
 
 
 router = APIRouter(
@@ -193,7 +195,69 @@ def create_order(
     if data.packaging_fee is not None:
         packaging_fee = max(0, int(data.packaging_fee))
 
-    grand_total = total_amount + shipping_cost + packaging_fee
+    # Validasi & Aplikasikan Kupon Promo jika ada
+    promo_code_id = None
+    applied_promo_code = None
+    discount_amount = 0
+
+    if data.promo_code and data.promo_code.strip():
+        clean_code = data.promo_code.strip().upper()
+        now = datetime.now()
+        promo = db.query(PromoCode).filter(PromoCode.code == clean_code).first()
+
+        if not promo or not promo.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kupon promo '{clean_code}' tidak valid atau sedang tidak aktif."
+            )
+
+        if promo.start_date and now < promo.start_date:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kupon promo '{clean_code}' baru dapat digunakan mulai {promo.start_date.strftime('%d %b %Y %H:%M')}."
+            )
+
+        if promo.end_date and now > promo.end_date:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kupon promo '{clean_code}' sudah kedaluwarsa."
+            )
+
+        if promo.usage_limit and promo.used_count >= promo.usage_limit:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kuota kupon promo '{clean_code}' sudah habis."
+            )
+
+        user_usage_count = db.query(PromoCodeUsage).filter(
+            PromoCodeUsage.promo_code_id == promo.id,
+            PromoCodeUsage.customer_id == current_customer.id
+        ).count()
+
+        if user_usage_count >= promo.usage_limit_per_user:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Anda sudah mencapai batas penggunaan kupon '{clean_code}'."
+            )
+
+        if total_amount < promo.min_order_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kupon promo '{clean_code}' membutuhkan minimum belanja Rp {promo.min_order_amount:,.0f}."
+            )
+
+        if promo.discount_type == "shipping_discount" and shipping_cost <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kupon '{clean_code}' adalah voucher potongan ongkir, namun pesanan Anda tidak memiliki biaya ongkir."
+            )
+
+        discount_amount = calculate_discount(promo, total_amount, shipping_cost)
+        promo_code_id = promo.id
+        applied_promo_code = promo.code
+        promo.used_count += 1
+
+    grand_total = max(0, total_amount + shipping_cost + packaging_fee - discount_amount)
 
     order = Order(
         order_code=order_code,
@@ -213,6 +277,9 @@ def create_order(
         total_amount=total_amount,
         shipping_cost=shipping_cost,
         packaging_fee=packaging_fee,
+        promo_code_id=promo_code_id,
+        promo_code=applied_promo_code,
+        discount_amount=discount_amount,
         grand_total=grand_total,
         notify_whatsapp=data.notify_whatsapp if data.notify_whatsapp is not None else True,
         status="pending",
@@ -222,6 +289,15 @@ def create_order(
 
     # Supaya order.id tersedia
     db.flush()
+
+    if promo_code_id:
+        usage = PromoCodeUsage(
+            promo_code_id=promo_code_id,
+            customer_id=current_customer.id,
+            order_id=order.id,
+            discount_amount=discount_amount,
+        )
+        db.add(usage)
     print("=== CHECK CREATED ORDER ===")
     print("Order ID:", order.id)
     print("Order latitude:", repr(order.latitude))
@@ -390,6 +466,15 @@ def cancel_order(
     # 7. Ubah status order
     order.status = "cancelled"
 
+    # 7b. Kembalikan kuota promo jika order ini memakai kupon promo
+    if order.promo_code_id:
+        promo = db.query(PromoCode).filter(PromoCode.id == order.promo_code_id).first()
+        if promo and promo.used_count > 0:
+            promo.used_count -= 1
+        db.query(PromoCodeUsage).filter(
+            PromoCodeUsage.order_id == order.id
+        ).delete()
+
     # 8. Audit trail
     create_audit_log(
         db=db,
@@ -530,6 +615,15 @@ def update_order_status(
             product = db.query(Product).filter(Product.id == item.product_id).first()
             if product:
                 product.stock += item.quantity
+
+        # Kembalikan kuota promo jika order ini memakai kupon promo
+        if order.promo_code_id:
+            promo = db.query(PromoCode).filter(PromoCode.id == order.promo_code_id).first()
+            if promo and promo.used_count > 0:
+                promo.used_count -= 1
+            db.query(PromoCodeUsage).filter(
+                PromoCodeUsage.order_id == order.id
+            ).delete()
 
         was_paid = old_status in ["paid", "processing", "delivered"]
         if was_paid:

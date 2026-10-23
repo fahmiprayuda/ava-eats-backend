@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -126,3 +127,23 @@ def get_current_customer(
         )
 
     return customer
+
+
+def get_optional_customer(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db)
+) -> Optional[Customer]:
+    if not credentials:
+        return None
+
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        customer_id = payload.get("sub")
+        role = payload.get("role")
+        if not customer_id or role != "customer":
+            return None
+    except Exception:
+        return None
+
+    return db.query(Customer).filter(Customer.id == int(customer_id)).first()

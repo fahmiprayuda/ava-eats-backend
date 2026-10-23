@@ -35,6 +35,8 @@ class OrderResponse(BaseModel):
     fulfillment_method: str
     shipping_cost: int
     packaging_fee: Optional[int] = 0
+    promo_code: Optional[str] = None
+    discount_amount: int = 0
     grand_total: int
 
     cancellation_reason: Optional[str] = None

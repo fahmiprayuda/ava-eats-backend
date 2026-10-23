@@ -333,10 +333,12 @@ def create_gateway_payment(
                 detail="Ongkos kirim tidak konsisten dengan order"
             )
 
-        expected_grand_total = (
+        expected_grand_total = max(
+            0,
             order.total_amount
             + (order.shipping_cost or 0)
             + (order.packaging_fee or 0)
+            - (order.discount_amount or 0)
         )
         if order.grand_total != expected_grand_total:
             raise HTTPException(
@@ -348,7 +350,12 @@ def create_gateway_payment(
 
         # Pickup tidak membutuhkan kurir atau shipment
         order.shipping_cost = 0
-        order.grand_total = order.total_amount + (order.packaging_fee or 0)
+        order.grand_total = max(
+            0,
+            order.total_amount
+            + (order.packaging_fee or 0)
+            - (order.discount_amount or 0)
+        )
 
     else:
         raise HTTPException(
