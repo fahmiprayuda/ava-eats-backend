@@ -35,6 +35,7 @@ class Order(Base):
     notes = Column(String(500), nullable=True)
     total_amount = Column(Integer, nullable=False)
     shipping_cost = Column(Integer, nullable=False, default=0)
+    packaging_fee = Column(Integer, nullable=False, default=0)
     grand_total = Column(Integer, nullable=False, default=0)
     status = Column(String(30),nullable=False, default="pending")
     cancellation_reason = Column(String(255), nullable=True)

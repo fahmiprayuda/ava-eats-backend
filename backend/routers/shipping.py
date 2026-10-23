@@ -276,7 +276,7 @@ def select_shipping(
     # 5. Update total order
     order.shipping_cost = data.shipping_cost
     order.grand_total = (
-        order.total_amount + data.shipping_cost
+        order.total_amount + data.shipping_cost + (order.packaging_fee or 0)
     )
 
     db.commit()
@@ -347,7 +347,7 @@ def create_shipping_order(
     # 4. Pickup tidak perlu booking Biteship
     if order.fulfillment_method == "pickup":
         order.shipping_cost = 0
-        order.grand_total = order.total_amount
+        order.grand_total = order.total_amount + (order.packaging_fee or 0)
 
         db.commit()
         db.refresh(order)
@@ -385,7 +385,12 @@ def create_shipping_order(
             detail="Shipping cost tidak sesuai dengan order",
         )
 
-    if order.grand_total != order.total_amount + order.shipping_cost:
+    expected_grand_total = (
+        order.total_amount
+        + (order.shipping_cost or 0)
+        + (order.packaging_fee or 0)
+    )
+    if order.grand_total != expected_grand_total:
         raise HTTPException(
             status_code=400,
             detail="Grand total order tidak valid",

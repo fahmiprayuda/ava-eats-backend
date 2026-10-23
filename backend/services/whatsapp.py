@@ -112,38 +112,18 @@ def send_whatsapp_message(target_phone: str, message: str) -> bool:
 def notify_order_paid(order, customer=None, items=None):
     """
     Trigger saat pembayaran pesanan terverifikasi lunas:
-    1. Kirim notifikasi konfirmasi ke Customer
-    2. Kirim alert ke Admin toko
+    - Alert internal dikirim ke WhatsApp Admin toko agar tim dapat segera menyiapkan menu.
+    - (Pesan ke customer dilewati agar customer tidak risih / hanya menerima notif saat paket siap/dikirim).
     """
     customer_phone = getattr(order, "phone", None) or getattr(customer, "phone", "")
     customer_name = getattr(order, "customer_name", None) or getattr(customer, "name", "Moms")
     order_code = getattr(order, "order_code", None) or f"ORDER-{order.id}"
     grand_total = getattr(order, "grand_total", None) or getattr(order, "total_amount", 0)
     fulfillment = "🛵 Pengiriman Kurir" if (getattr(order, "fulfillment_method", "delivery") == "delivery") else "🛍️ Ambil di Outlet (Pickup)"
-    tracking_url = f"{FRONTEND_BASE_URL}/orders"
 
-    # 1. Pesan ke Customer (Hanya jika customer opt-in WhatsApp)
-    customer_opt_in = getattr(order, "notify_whatsapp", True)
-    if customer_opt_in:
-        customer_msg = (
-            f"🍱 *PESANAN DIKONFIRMASI - {STORE_NAME.upper()}*\n\n"
-            f"Hai Moms *{customer_name}*, terima kasih sudah memesan di Ava Eats! ❤️\n"
-            f"Pembayaran untuk pesanan *#{order_code}* sebesar *Rp {grand_total:,.0f}* telah kami terima dengan sukses.\n\n"
-            f"✨ *Status Saat Ini*: Sedang Disiapkan oleh tim Ava Eats (Frozen food & Ice Pack berkualitas prima).\n"
-            f"📦 *Metode*: {fulfillment}\n\n"
-            f"Moms bisa memantau status pesanan secara real-time di:\n"
-            f"👉 {tracking_url}\n\n"
-            f"_Homemade with love for your little one_\n"
-            f"*{STORE_NAME}*"
-        )
-        send_whatsapp_message(customer_phone, customer_msg)
-    else:
-        logger.info(f"[WA] Customer #{order_code} memilih tidak menerima notifikasi WhatsApp (Opt-out).")
-
-    # 2. Pesan Alert ke Admin
+    # Alert ke Admin Toko
     admin_phone = WHATSAPP_ADMIN_PHONE
     if admin_phone:
-        # Ringkasan menu
         items_text = ""
         order_items = items or getattr(order, "items", [])
         if order_items:

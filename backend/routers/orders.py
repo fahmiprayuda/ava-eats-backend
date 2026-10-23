@@ -189,7 +189,11 @@ def create_order(
     if fulfillment_method == "delivery" and data.shipping_cost:
         shipping_cost = max(0, int(data.shipping_cost))
 
-    grand_total = total_amount + shipping_cost
+    packaging_fee = 0
+    if data.packaging_fee is not None:
+        packaging_fee = max(0, int(data.packaging_fee))
+
+    grand_total = total_amount + shipping_cost + packaging_fee
 
     order = Order(
         order_code=order_code,
@@ -208,6 +212,7 @@ def create_order(
         notes=data.notes,
         total_amount=total_amount,
         shipping_cost=shipping_cost,
+        packaging_fee=packaging_fee,
         grand_total=grand_total,
         notify_whatsapp=data.notify_whatsapp if data.notify_whatsapp is not None else True,
         status="pending",

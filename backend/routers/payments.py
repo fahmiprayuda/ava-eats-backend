@@ -333,7 +333,12 @@ def create_gateway_payment(
                 detail="Ongkos kirim tidak konsisten dengan order"
             )
 
-        if order.grand_total != order.total_amount + order.shipping_cost:
+        expected_grand_total = (
+            order.total_amount
+            + (order.shipping_cost or 0)
+            + (order.packaging_fee or 0)
+        )
+        if order.grand_total != expected_grand_total:
             raise HTTPException(
                 status_code=400,
                 detail="Grand total order tidak valid"
@@ -343,7 +348,7 @@ def create_gateway_payment(
 
         # Pickup tidak membutuhkan kurir atau shipment
         order.shipping_cost = 0
-        order.grand_total = order.total_amount
+        order.grand_total = order.total_amount + (order.packaging_fee or 0)
 
     else:
         raise HTTPException(
