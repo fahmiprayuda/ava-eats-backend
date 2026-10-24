@@ -1,7 +1,14 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PARENT_DIR = os.path.dirname(BASE_DIR)
+for env_path in [os.path.join(PARENT_DIR, ".env"), os.path.join(BASE_DIR, ".env"), ".env"]:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        break
+else:
+    load_dotenv()
 
 BITESHIP_API_KEY = os.getenv("BITESHIP_API_KEY")
 BITESHIP_BASE_URL = os.getenv(

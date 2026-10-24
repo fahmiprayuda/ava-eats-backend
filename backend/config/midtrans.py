@@ -1,8 +1,14 @@
 import os
-
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PARENT_DIR = os.path.dirname(BASE_DIR)
+for env_path in [os.path.join(PARENT_DIR, ".env"), os.path.join(BASE_DIR, ".env"), ".env"]:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        break
+else:
+    load_dotenv()
 
 MIDTRANS_SERVER_KEY = os.getenv("MIDTRANS_SERVER_KEY")
 MIDTRANS_CLIENT_KEY = os.getenv("MIDTRANS_CLIENT_KEY")
