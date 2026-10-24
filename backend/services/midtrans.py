@@ -36,18 +36,10 @@ def create_snap_transaction(
     }
 
     # Konfigurasi channel pembayaran Midtrans
-    if payment_method == "bank_transfer":
-        payload["enabled_payments"] = [
-            "bca_va",
-            "bni_va",
-            "bri_va",
-            "echannel",
-            "permata_va",
-            "cimb_va",
-            "other_va",
-        ]
+    if payment_method in ["bank_transfer", "bca_va"]:
+        payload["enabled_payments"] = ["bca_va"]
     elif payment_method in ["qris", "other_qris"]:
-        payload["enabled_payments"] = ["other_qris", "gopay", "shopeepay"]
+        payload["enabled_payments"] = ["other_qris"]
     elif payment_method and payment_method != "all":
         payload["enabled_payments"] = [payment_method]
 
