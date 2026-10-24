@@ -455,6 +455,15 @@ def cancel_order(
         # Payment expired / gagal
         if transaction_status == "expire":
             payment.status = "expired"
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_EXPIRED",
+                entity_type="payment",
+                entity_id=payment.id,
+                description=f"Payment {order.order_code} expired on Midtrans"
+            )
 
         elif transaction_status in [
             "deny",
@@ -462,6 +471,15 @@ def cancel_order(
             "failure"
         ]:
             payment.status = "rejected"
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_REJECTED",
+                entity_type="payment",
+                entity_id=payment.id,
+                description=f"Payment {order.order_code} rejected on Midtrans ({transaction_status})"
+            )
 
     # 6. Kembalikan stock
     for item in order.items:

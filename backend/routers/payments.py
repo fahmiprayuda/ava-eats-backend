@@ -410,6 +410,8 @@ def create_gateway_payment(
         transaction_status = midtrans_status.get(
             "transaction_status"
         )
+        if not transaction_status or midtrans_status.get("status_code") in ["404", 404]:
+            transaction_status = "not_initiated"
 
         # Cek apakah payment lama masih dalam window berlaku (15 menit)
         is_still_fresh = False
@@ -545,14 +547,35 @@ def create_gateway_payment(
             db.flush()
 
         else:
+            # Jika status tidak dikenali atau None tetapi payment lama masih fresh & punya gateway_token
+            if is_still_fresh and existing_payment.gateway_token:
+                return {
+                    "payment_id": existing_payment.id,
+                    "order_id": order.id,
+                    "order_code": order.order_code,
+                    "payment_method": existing_payment.payment_method,
+                    "amount": existing_payment.amount,
+                    "status": existing_payment.status,
+                    "payment_url": existing_payment.payment_url,
+                    "gateway_token": existing_payment.gateway_token,
+                    "expires_at": existing_payment.expires_at
+                }
 
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Status payment dari Midtrans tidak "
-                    f"dikenali: {transaction_status}"
+            # Jika lewat waktu/tidak fresh, tandai expired agar sistem otomatis membuat transaksi baru
+            existing_payment.status = "expired"
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_EXPIRED",
+                entity_type="payment",
+                entity_id=existing_payment.id,
+                description=(
+                    f"Payment {order.order_code} "
+                    f"expired (lewat batas waktu) dan dibuat transaksi baru"
                 )
             )
+            db.flush()
 
     # =====================================================
     # 11. BUAT PAYMENT BARU

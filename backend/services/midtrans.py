@@ -94,7 +94,12 @@ def get_transaction_status(order_id: str):
             f"Midtrans status error ({response.status_code}): {response.text}"
         )
 
-    return response.json()
+    data = response.json()
+    # Midtrans dapat mengembalikan HTTP 200 dengan status_code '404' jika transaksi Snap belum di-initiate
+    if data.get("status_code") in ["404", 404] or not data.get("transaction_status"):
+        data["transaction_status"] = "not_initiated"
+
+    return data
 
 
 def verify_midtrans_signature(
@@ -158,16 +163,97 @@ def sync_payment_status(db, payment, order=None):
 
         elif tx_status == "expire":
             payment.status = "expired"
+            if not order:
+                from models.order import Order
+                order = db.query(Order).filter(Order.id == payment.order_id).first()
+
+            from utils.audit import create_audit_log
+            order_code = order.order_code if order else f"ID {payment.order_id}"
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_EXPIRED",
+                entity_type="payment",
+                entity_id=payment.id,
+                description=f"Payment {order_code} expired on Midtrans via sync"
+            )
+
+            if order and order.status == "pending":
+                order.status = "cancelled"
+                order.cancellation_reason = "Waktu pembayaran kedaluwarsa (Expired)"
+                from models.product import Product
+                for item in order.items:
+                    product = db.query(Product).filter(Product.id == item.product_id).first()
+                    if product:
+                        product.stock += item.quantity
+                create_audit_log(
+                    db=db,
+                    user_type="system",
+                    user_id=0,
+                    action="ORDER_EXPIRED",
+                    entity_type="order",
+                    entity_id=order.id,
+                    description=f"Order {order.order_code} kedaluwarsa karena pembayaran expired"
+                )
             db.commit()
 
         elif tx_status in ["deny", "cancel", "failure"]:
             payment.status = "rejected"
+            if not order:
+                from models.order import Order
+                order = db.query(Order).filter(Order.id == payment.order_id).first()
+
+            from utils.audit import create_audit_log
+            order_code = order.order_code if order else f"ID {payment.order_id}"
+            create_audit_log(
+                db=db,
+                user_type="system",
+                user_id=0,
+                action="PAYMENT_REJECTED",
+                entity_type="payment",
+                entity_id=payment.id,
+                description=f"Payment {order_code} rejected on Midtrans ({tx_status})"
+            )
             db.commit()
 
         elif tx_status in ["not_initiated", "pending"]:
             # Jika sudah lebih dari 15 menit, tandai expired
             if payment.created_at and (datetime.now() - payment.created_at).total_seconds() > (15 * 60):
                 payment.status = "expired"
+                if not order:
+                    from models.order import Order
+                    order = db.query(Order).filter(Order.id == payment.order_id).first()
+
+                from utils.audit import create_audit_log
+                order_code = order.order_code if order else f"ID {payment.order_id}"
+                create_audit_log(
+                    db=db,
+                    user_type="system",
+                    user_id=0,
+                    action="PAYMENT_EXPIRED",
+                    entity_type="payment",
+                    entity_id=payment.id,
+                    description=f"Payment {order_code} expired (melebihi batas waktu 15 menit)"
+                )
+
+                if order and order.status == "pending":
+                    order.status = "cancelled"
+                    order.cancellation_reason = "Waktu pembayaran kedaluwarsa (Expired)"
+                    from models.product import Product
+                    for item in order.items:
+                        product = db.query(Product).filter(Product.id == item.product_id).first()
+                        if product:
+                            product.stock += item.quantity
+                    create_audit_log(
+                        db=db,
+                        user_type="system",
+                        user_id=0,
+                        action="ORDER_EXPIRED",
+                        entity_type="order",
+                        entity_id=order.id,
+                        description=f"Order {order.order_code} kedaluwarsa (melebihi batas waktu 15 menit)"
+                    )
                 db.commit()
 
     except Exception as e:
