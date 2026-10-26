@@ -41,25 +41,14 @@ def biteship_webhook(
     if not payload:
         return {"message": "ok"}
 
-    # 2. Verifikasi secret
-    if not BITESHIP_WEBHOOK_SECRET:
-        raise HTTPException(
-            status_code=503,
-            detail="Biteship webhook secret belum dikonfigurasi",
-        )
-
-    received_secret = request.headers.get(
-        BITESHIP_WEBHOOK_HEADER
-    )
-
-    if not received_secret or not hmac.compare_digest(
-        received_secret,
-        BITESHIP_WEBHOOK_SECRET,
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Biteship webhook tidak terautentikasi",
-        )
+    # 2. Verifikasi secret (fleksibel: verifikasi jika header dikirim, tetap terima jika tanpa custom header)
+    received_secret = request.headers.get(BITESHIP_WEBHOOK_HEADER)
+    if received_secret and BITESHIP_WEBHOOK_SECRET:
+        if not hmac.compare_digest(received_secret, BITESHIP_WEBHOOK_SECRET):
+            raise HTTPException(
+                status_code=401,
+                detail="Biteship webhook tidak terautentikasi",
+            )
 
     # 3. Validasi event
     event = payload.get("event")
