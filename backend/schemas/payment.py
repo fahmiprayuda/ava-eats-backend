@@ -22,6 +22,6 @@ class PaymentVerifyRequest(BaseModel):
 
 class GatewayPaymentRequest(BaseModel):
     payment_method: str = Field(
-        default="other_qris",
+        default="qris",
         max_length=30
     )

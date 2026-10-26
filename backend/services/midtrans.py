@@ -36,10 +36,20 @@ def create_snap_transaction(
     }
 
     # Konfigurasi channel pembayaran Midtrans
+    # Di Production, channel resmi QRIS adalah 'qris' dan 'gopay'/'shopeepay',
+    # sedangkan 'other_qris' adalah simulator sandbox. Kita sertakan semuanya agar kompatibel di Sandbox & Live.
     if payment_method in ["bank_transfer", "bca_va"]:
-        payload["enabled_payments"] = ["bca_va"]
+        payload["enabled_payments"] = [
+            "bca_va",
+            "bni_va",
+            "bri_va",
+            "permata_va",
+            "cimb_va",
+            "echannel",
+            "other_va",
+        ]
     elif payment_method in ["qris", "other_qris"]:
-        payload["enabled_payments"] = ["other_qris"]
+        payload["enabled_payments"] = ["qris", "gopay", "shopeepay", "other_qris"]
     elif payment_method and payment_method != "all":
         payload["enabled_payments"] = [payment_method]
 
