@@ -46,7 +46,7 @@ def upload_product_image(
     with open(filepath, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    image_url = f"http://127.0.0.1:8000/uploads/products/{unique_filename}"
+    image_url = f"/uploads/products/{unique_filename}"
     return {
         "message": "Gambar berhasil diunggah dari perangkat",
         "image_url": image_url,
