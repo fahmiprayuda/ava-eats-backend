@@ -419,6 +419,10 @@ def create_gateway_payment(
             age_seconds = (datetime.now() - existing_payment.created_at).total_seconds()
             is_still_fresh = age_seconds < (15 * 60)
 
+        # Jangan gunakan cache jika tipe payment_method berbeda atau merupakan format lama
+        if existing_payment.payment_method == "other_qris" or (data.payment_method and data.payment_method != existing_payment.payment_method):
+            is_still_fresh = False
+
         # =================================================
         # 7. MASIH PENDING DI MIDTRANS / BELUM DI-INITIATE
         # =================================================
@@ -547,6 +551,9 @@ def create_gateway_payment(
             db.flush()
 
         else:
+            if existing_payment.payment_method == "other_qris" or (data.payment_method and data.payment_method != existing_payment.payment_method):
+                is_still_fresh = False
+
             # Jika status tidak dikenali atau None tetapi payment lama masih fresh & punya gateway_token
             if is_still_fresh and existing_payment.gateway_token:
                 return {
