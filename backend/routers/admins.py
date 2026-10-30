@@ -217,7 +217,11 @@ def get_audit_trails(
                 "entity_type": r.entity_type,
                 "entity_id": r.entity_id,
                 "description": r.description,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "created_at": (
+                    r.created_at.isoformat() + "Z"
+                    if r.created_at and not r.created_at.isoformat().endswith("Z")
+                    else (r.created_at.isoformat() if r.created_at else None)
+                ),
             }
             for r in records
         ]
