@@ -6,7 +6,7 @@ from datetime import datetime
 
 class OrderItemResponse(BaseModel):
     id: int
-    product_id: int
+    product_id: Optional[int] = None
     product_name: str
     price: int
     quantity: int

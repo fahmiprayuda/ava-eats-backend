@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.product import Product
 from models.admin import Admin
+from models.order_item import OrderItem
 from schemas.product import ProductRequest
 from schemas.product_availability import ProductAvailabilityRequest
 from auth.dependencies import require_admin
@@ -243,22 +244,39 @@ def delete_product(
             detail="Product tidak ditemukan"
         )
 
-    create_audit_log(
-        db=db,
-        user_type="admin",
-        user_id=current_admin.id,
-        action="PRODUCT_DELETED",
-        entity_type="product",
-        entity_id=existing_product.id,
-        description=f"Admin {current_admin.username} menghapus produk '{existing_product.name}' (ID: {existing_product.id})"
-    )
+    product_name = existing_product.name
 
-    db.delete(existing_product)
-    db.commit()
+    try:
+        # Putuskan keterkaitan foreign key di order_items agar riwayat pesanan (snapshot nama & harga)
+        # tetap tersimpan di riwayat transaksi, tetapi produk dapat dihapus dari katalog
+        db.query(OrderItem).filter(OrderItem.product_id == product_id).update(
+            {"product_id": None},
+            synchronize_session=False
+        )
+        db.flush()
 
-    return {
-        "message": "Product berhasil dihapus"
-    }
+        create_audit_log(
+            db=db,
+            user_type="admin",
+            user_id=current_admin.id,
+            action="PRODUCT_DELETED",
+            entity_type="product",
+            entity_id=existing_product.id,
+            description=f"Admin {current_admin.username} menghapus produk '{product_name}' (ID: {product_id})"
+        )
+
+        db.delete(existing_product)
+        db.commit()
+
+        return {
+            "message": f"Produk '{product_name}' berhasil dihapus"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Gagal menghapus produk: {str(e)}"
+        )
 
 @router.put("/{product_id}/availability")
 def update_product_availability(

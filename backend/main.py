@@ -51,8 +51,37 @@ try:
             conn.execute(text("ALTER TABLE promo_codes ADD COLUMN name VARCHAR(100) NULL AFTER code;"))
             conn.execute(text("UPDATE promo_codes SET name = COALESCE(description, code) WHERE name IS NULL;"))
             conn.commit()
+
+        # Migrasi otomatis: ubah order_items.product_id agar nullable dan ON DELETE SET NULL
+        # sehingga produk dapat dihapus tanpa merusak riwayat transaksi pemesanan
+        col_res = conn.execute(text("SHOW COLUMNS FROM order_items LIKE 'product_id';")).fetchone()
+        if col_res and col_res[2] == "NO":  # col_res[2] adalah kolom 'Null' ('YES' atau 'NO')
+            # 1. Modifikasi kolom menjadi NULL
+            conn.execute(text("ALTER TABLE order_items MODIFY product_id INT NULL;"))
+            conn.commit()
+
+            # 2. Update foreign key constraint agar ON DELETE SET NULL
+            fk_query = text("""
+                SELECT CONSTRAINT_NAME 
+                FROM information_schema.key_column_usage 
+                WHERE TABLE_SCHEMA = DATABASE() 
+                  AND TABLE_NAME = 'order_items' 
+                  AND COLUMN_NAME = 'product_id' 
+                  AND REFERENCED_TABLE_NAME = 'products';
+            """)
+            fk_rows = conn.execute(fk_query).fetchall()
+            for row in fk_rows:
+                fk_name = row[0]
+                conn.execute(text(f"ALTER TABLE order_items DROP FOREIGN KEY `{fk_name}`;"))
+            
+            conn.execute(text("""
+                ALTER TABLE order_items 
+                ADD CONSTRAINT fk_order_items_product 
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
+            """))
+            conn.commit()
 except Exception as e:
-    print(f"Warning auto-migration promo_codes: {e}")
+    print(f"Warning auto-migration database: {e}")
 
 Base.metadata.create_all(bind=engine)
 
