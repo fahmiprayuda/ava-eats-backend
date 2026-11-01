@@ -147,6 +147,9 @@ def validate_promo_code(
         "discount_value": promo.discount_value,
         "max_discount": promo.max_discount,
         "min_order_amount": promo.min_order_amount,
+        "start_date": promo.start_date.isoformat() if promo.start_date else None,
+        "end_date": promo.end_date.isoformat() if promo.end_date else None,
+        "is_active": promo.is_active,
     }
 
     return PromoValidateResponse(
