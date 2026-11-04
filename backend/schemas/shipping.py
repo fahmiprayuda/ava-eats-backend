@@ -19,3 +19,10 @@ class CalculateShippingRatesRequest(BaseModel):
     postal_code: Optional[str] = None
     items: List[ShippingItemRateRequest]
 
+
+class ManualTrackingRequest(BaseModel):
+    tracking_number: str
+    courier: Optional[str] = None
+    tracking_url: Optional[str] = None
+    update_order_status: bool = False
+

@@ -8,12 +8,18 @@ from models.customer_address import CustomerAddress
 from models.shipment import Shipment
 from models.payment import Payment
 from models.product import Product
+from models.admin import Admin
 
-from schemas.shipping import ShippingSelectRequest, CalculateShippingRatesRequest
+from schemas.shipping import (
+    ShippingSelectRequest,
+    CalculateShippingRatesRequest,
+    ManualTrackingRequest,
+)
 
 from services.biteship import get_courier_rates, create_biteship_order
 from utils.audit import create_audit_log
 from services.whatsapp import notify_order_shipped
+from auth.dependencies import require_admin
 
 
 router = APIRouter(
@@ -692,4 +698,76 @@ def simulate_shipping_delivered(
         "order_status": order.status,
         "shipment_status": shipment.status,
         "delivered_at": shipment.delivered_at.isoformat() if shipment.delivered_at else None,
+    }
+
+
+@router.post("/manual-tracking/{order_id}")
+def update_manual_tracking(
+    order_id: int,
+    data: ManualTrackingRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(require_admin),
+):
+    """
+    Endpoint untuk Admin menginput atau memperbarui nomor resi pengiriman secara manual.
+    Berguna saat pesanan dikirim memakai kurir manual / kurir toko atau ekspedisi di luar Biteship.
+    """
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+
+    shipment = db.query(Shipment).filter(Shipment.order_id == order_id).first()
+    if not shipment:
+        shipment = Shipment(
+            order_id=order.id,
+            courier=data.courier or "manual",
+            service="standard",
+            shipping_cost=order.shipping_cost,
+            status="allocated",
+        )
+        db.add(shipment)
+
+    clean_resi = data.tracking_number.strip().upper()
+    shipment.tracking_number = clean_resi
+    if data.courier:
+        shipment.courier = data.courier.strip().lower()
+
+    if data.tracking_url:
+        shipment.tracking_url = data.tracking_url.strip()
+    elif (shipment.courier or "").lower() == "paxel":
+        shipment.tracking_url = f"https://paxel.co/track?waybill={clean_resi}"
+    elif (shipment.courier or "").lower() == "jne":
+        shipment.tracking_url = f"https://www.jne.co.id/tracking/trace/{clean_resi}"
+    elif (shipment.courier or "").lower() in ["jnt", "j&t"]:
+        shipment.tracking_url = "https://jet.co.id/track"
+
+    if data.update_order_status and order.status in ["paid", "processing"]:
+        order.status = "delivered"
+        shipment.status = "delivered"
+
+    admin_name = getattr(current_admin, "name", None) or getattr(current_admin, "username", "Admin")
+    create_audit_log(
+        db=db,
+        user_type="admin",
+        user_id=current_admin.id,
+        action="TRACKING_NUMBER_UPDATED",
+        entity_type="order",
+        entity_id=order.id,
+        description=(
+            f"Admin {admin_name} menginput/memperbarui No. Resi #{clean_resi} "
+            f"(Kurir: {shipment.courier or 'manual'}) untuk order {order.order_code}."
+        ),
+    )
+
+    db.commit()
+    db.refresh(shipment)
+    db.refresh(order)
+
+    return {
+        "message": "Nomor resi berhasil disimpan",
+        "order_id": order.id,
+        "tracking_number": shipment.tracking_number,
+        "courier": shipment.courier,
+        "tracking_url": shipment.tracking_url,
+        "order_status": order.status,
     }

@@ -46,6 +46,11 @@ class OrderResponse(BaseModel):
     refunded_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
+    courier: Optional[str] = None
+    courier_service: Optional[str] = None
+    tracking_number: Optional[str] = None
+    tracking_url: Optional[str] = None
+
     items: List[OrderItemResponse]
 
     class Config:

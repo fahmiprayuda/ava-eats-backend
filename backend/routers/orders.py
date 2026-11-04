@@ -543,6 +543,13 @@ def get_orders(
         Order.created_at.desc()
     ).all()
 
+    for ord_obj in orders:
+        if ord_obj.shipment:
+            ord_obj.courier = ord_obj.shipment.courier
+            ord_obj.courier_service = ord_obj.shipment.service
+            ord_obj.tracking_number = ord_obj.shipment.tracking_number
+            ord_obj.tracking_url = ord_obj.shipment.tracking_url
+
     return orders
 
 @router.get("/{order_id}", response_model=OrderResponse)
@@ -566,6 +573,12 @@ def get_order(
             status_code=403,
             detail="Anda tidak memiliki akses untuk melihat order ini"
         )
+
+    if order.shipment:
+        order.courier = order.shipment.courier
+        order.courier_service = order.shipment.service
+        order.tracking_number = order.shipment.tracking_number
+        order.tracking_url = order.shipment.tracking_url
 
     return order
 
