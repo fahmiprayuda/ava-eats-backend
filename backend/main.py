@@ -1,6 +1,12 @@
 import os
 import sys
+import time
 from dotenv import load_dotenv
+
+# Pastikan runtime Python menggunakan zona waktu Asia/Jakarta (WIB / GMT+7)
+os.environ["TZ"] = "Asia/Jakarta"
+if hasattr(time, "tzset"):
+    time.tzset()
 
 # Tambahkan direktori backend ke sys.path agar impor modular berjalan lancar baik dari root maupun folder backend
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
