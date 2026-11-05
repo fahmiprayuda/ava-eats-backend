@@ -47,6 +47,23 @@ def calculate_discount(promo: PromoCode, subtotal: int, shipping_cost: int = 0) 
     return 0
 
 
+def get_promo_usage_count(db: Session, promo: PromoCode, customer_id: Optional[int] = None) -> int:
+    """
+    Hitung jumlah pemakaian kupon (baik total maupun per customer) dalam periode aktif saat ini.
+    - Jika promo memiliki start_date, hanya hitung pemakaian sejak start_date tersebut.
+    - Jika promo memiliki end_date, hanya hitung pemakaian hingga end_date tersebut.
+    - Jika promo tidak memiliki tanggal periode (lifetime coupon), hitung seluruh pemakaian (all-time).
+    """
+    query = db.query(PromoCodeUsage).filter(PromoCodeUsage.promo_code_id == promo.id)
+    if customer_id is not None:
+        query = query.filter(PromoCodeUsage.customer_id == customer_id)
+    if promo.start_date:
+        query = query.filter(PromoCodeUsage.used_at >= promo.start_date)
+    if promo.end_date:
+        query = query.filter(PromoCodeUsage.used_at <= promo.end_date)
+    return query.count()
+
+
 # =============================================================================
 # CUSTOMER ENDPOINTS
 # =============================================================================
@@ -89,11 +106,14 @@ def validate_promo_code(
             detail=f"Kupon promo '{clean_code}' sudah kedaluwarsa pada {promo.end_date.strftime('%d %b %Y %H:%M')}."
         )
 
-    if promo.usage_limit and promo.used_count >= promo.usage_limit:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Kuota kupon promo '{clean_code}' sudah habis."
-        )
+    # Kuota kupon total (dalam periode aktif jika ada start_date)
+    if promo.usage_limit:
+        period_total_usage = get_promo_usage_count(db, promo)
+        if period_total_usage >= promo.usage_limit:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kuota kupon promo '{clean_code}' sudah habis untuk periode ini."
+            )
 
     # Cek sasaran khusus pelanggan (targeted promo)
     if promo.target_type == "specific":
@@ -109,17 +129,14 @@ def validate_promo_code(
                 detail=f"Maaf Moms, kupon promo '{clean_code}' hanya berlaku untuk pelanggan terpilih."
             )
 
-    # Cek batas pemakaian per customer (jika customer login)
+    # Cek batas pemakaian per customer (dalam periode aktif jika ada start_date)
     if current_customer:
-        user_usage_count = db.query(PromoCodeUsage).filter(
-            PromoCodeUsage.promo_code_id == promo.id,
-            PromoCodeUsage.customer_id == current_customer.id
-        ).count()
+        user_usage_count = get_promo_usage_count(db, promo, customer_id=current_customer.id)
 
         if user_usage_count >= promo.usage_limit_per_user:
             raise HTTPException(
                 status_code=400,
-                detail=f"Anda sudah mencapai batas penggunaan kupon '{clean_code}' (maksimal {promo.usage_limit_per_user}x per akun)."
+                detail=f"Anda sudah mencapai batas penggunaan kupon '{clean_code}' (maksimal {promo.usage_limit_per_user}x per akun untuk periode ini)."
             )
 
     # Cek minimum belanja
@@ -187,8 +204,12 @@ def get_active_promos(
 
     available_promos = []
     for p in promos:
-        # Cek kuota habis
-        if p.usage_limit is not None and p.used_count >= p.usage_limit:
+        # Hitung dan sinkronkan pemakaian kupon dalam periode aktif saat ini
+        period_usage = get_promo_usage_count(db, p)
+        p.used_count = period_usage
+
+        # Cek kuota habis di periode aktif
+        if p.usage_limit is not None and period_usage >= p.usage_limit:
             continue
 
         # Cek sasaran khusus pelanggan
@@ -215,8 +236,12 @@ def get_all_promos_admin(
 ):
     """
     Admin: Dapatkan seluruh daftar promo code (aktif maupun nonaktif).
+    Jumlah pemakaian (used_count) dihitung berdasarkan periode aktif saat ini.
     """
-    return db.query(PromoCode).order_by(PromoCode.created_at.desc()).all()
+    promos = db.query(PromoCode).order_by(PromoCode.created_at.desc()).all()
+    for p in promos:
+        p.used_count = get_promo_usage_count(db, p)
+    return promos
 
 
 @router.post("", response_model=PromoCodeResponse, status_code=status.HTTP_201_CREATED)
@@ -343,6 +368,9 @@ def update_promo_code(
                 )
     elif promo.target_type == "all":
         db.query(PromoCodeCustomer).filter(PromoCodeCustomer.promo_code_id == promo.id).delete()
+
+    # Sinkronisasi used_count ke periode baru jika tanggal atau limit diubah
+    promo.used_count = get_promo_usage_count(db, promo)
 
     db.commit()
     db.refresh(promo)

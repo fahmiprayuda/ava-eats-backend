@@ -28,7 +28,7 @@ from auth.dependencies import get_current_customer, require_admin
 from utils.audit import create_audit_log
 from services.midtrans import get_transaction_status
 from services.whatsapp import notify_order_ready_pickup, notify_order_refunded
-from routers.promos import calculate_discount
+from routers.promos import calculate_discount, get_promo_usage_count
 
 
 router = APIRouter(
@@ -223,11 +223,14 @@ def create_order(
                 detail=f"Kupon promo '{clean_code}' sudah kedaluwarsa."
             )
 
-        if promo.usage_limit and promo.used_count >= promo.usage_limit:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Kuota kupon promo '{clean_code}' sudah habis."
-            )
+        # Kuota kupon total (dalam periode aktif jika ada start_date)
+        if promo.usage_limit:
+            period_total_usage = get_promo_usage_count(db, promo)
+            if period_total_usage >= promo.usage_limit:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Kuota kupon promo '{clean_code}' sudah habis untuk periode ini."
+                )
 
         # Cek sasaran pelanggan khusus
         if promo.target_type == "specific":
@@ -238,15 +241,13 @@ def create_order(
                     detail=f"Maaf Moms, kupon promo '{clean_code}' hanya berlaku untuk pelanggan terpilih."
                 )
 
-        user_usage_count = db.query(PromoCodeUsage).filter(
-            PromoCodeUsage.promo_code_id == promo.id,
-            PromoCodeUsage.customer_id == current_customer.id
-        ).count()
+        # Cek batas pemakaian per customer (dalam periode aktif jika ada start_date)
+        user_usage_count = get_promo_usage_count(db, promo, customer_id=current_customer.id)
 
         if user_usage_count >= promo.usage_limit_per_user:
             raise HTTPException(
                 status_code=400,
-                detail=f"Anda sudah mencapai batas penggunaan kupon '{clean_code}'."
+                detail=f"Anda sudah mencapai batas penggunaan kupon '{clean_code}' (maksimal {promo.usage_limit_per_user}x per akun untuk periode ini)."
             )
 
         if total_amount < promo.min_order_amount:
@@ -300,6 +301,8 @@ def create_order(
     db.flush()
 
     if promo_code_id:
+        if promo:
+            promo.used_count = get_promo_usage_count(db, promo) + 1
         usage = PromoCodeUsage(
             promo_code_id=promo_code_id,
             customer_id=current_customer.id,
