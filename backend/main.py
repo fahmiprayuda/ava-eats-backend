@@ -42,6 +42,8 @@ from models import (
     PromoCodeUsage,
     PromoCodeCustomer,
     Category,
+    OtsNote,
+    OtsMenu,
 )
 
 # Migrasi otomatis kolom target_type & name pada promo_codes jika belum ada
@@ -91,7 +93,7 @@ except Exception as e:
 
 Base.metadata.create_all(bind=engine)
 
-from routers import customers, addresses, products, orders, payments, admins, auth, webhooks, shipping, promos, categories
+from routers import customers, addresses, products, orders, payments, admins, auth, webhooks, shipping, promos, categories, ots_notes
 
 app = FastAPI(title="Ava Eats API")
 
@@ -140,3 +142,4 @@ app.include_router(shipping.router)
 app.include_router(shipping.router, prefix="/api")
 app.include_router(promos.router)
 app.include_router(categories.router)
+app.include_router(ots_notes.router)

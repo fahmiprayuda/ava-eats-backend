@@ -9,3 +9,4 @@ from .audit_trail import AuditTrail
 from .shipment import Shipment
 from .category import Category
 from .promo_code import PromoCode, PromoCodeUsage, PromoCodeCustomer
+from .ots_note import OtsNote, OtsMenu

@@ -1,3 +1,4 @@
+from datetime import date, datetime, time
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -177,12 +178,25 @@ def get_audit_trails(
     search: Optional[str] = None,
     entity_type: Optional[str] = None,
     action: Optional[str] = None,
-    limit: int = 50,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(require_admin)
 ):
+    if start_date and end_date:
+        if end_date < start_date:
+            raise HTTPException(status_code=400, detail="Tanggal akhir tidak boleh lebih kecil dari tanggal awal.")
+        if (end_date - start_date).days > 31:
+            raise HTTPException(status_code=400, detail="Rentang tanggal audit trail maksimal 1 bulan (31 hari).")
+
     query = db.query(AuditTrail)
+
+    if start_date:
+        query = query.filter(AuditTrail.created_at >= datetime.combine(start_date, time.min))
+    if end_date:
+        query = query.filter(AuditTrail.created_at <= datetime.combine(end_date, time.max))
 
     if search and search.strip():
         term = f"%{search.strip()}%"
