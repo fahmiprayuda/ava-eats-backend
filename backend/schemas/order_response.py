@@ -40,6 +40,8 @@ class OrderResponse(BaseModel):
     grand_total: int
 
     cancellation_reason: Optional[str] = None
+    is_preorder: Optional[bool] = False
+    estimated_delivery_date: Optional[datetime] = None
     refund_status: Optional[str] = None
     refund_note: Optional[str] = None
     refund_proof_url: Optional[str] = None

@@ -1,7 +1,7 @@
 import os
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
@@ -269,6 +269,24 @@ def create_order(
 
     grand_total = max(0, total_amount + shipping_cost + packaging_fee - discount_amount)
 
+    has_po = any(getattr(it["product"], "is_preorder", False) for it in order_items_data)
+    est_po_date = None
+    if has_po:
+        po_dates = [
+            getattr(it["product"], "preorder_pickup_date", None)
+            for it in order_items_data
+            if getattr(it["product"], "is_preorder", False) and getattr(it["product"], "preorder_pickup_date", None)
+        ]
+        if po_dates:
+            try:
+                latest_pdate = max(po_dates)
+                est_po_date = datetime.strptime(latest_pdate, "%Y-%m-%d").replace(hour=10, minute=0, second=0)
+            except Exception:
+                est_po_date = None
+        if not est_po_date:
+            max_days = max([getattr(it["product"], "preorder_days", 1) for it in order_items_data if getattr(it["product"], "is_preorder", False)], default=1)
+            est_po_date = datetime.now() + timedelta(days=max_days)
+
     order = Order(
         order_code=order_code,
         customer_id=current_customer.id,
@@ -291,6 +309,8 @@ def create_order(
         promo_code=applied_promo_code,
         discount_amount=discount_amount,
         grand_total=grand_total,
+        is_preorder=has_po,
+        estimated_delivery_date=est_po_date,
         notify_whatsapp=data.notify_whatsapp if data.notify_whatsapp is not None else True,
         status="pending",
     )

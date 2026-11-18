@@ -35,6 +35,7 @@ def calculate_shipping_rates(
 ):
     destination_postal_code = None
     address_info = None
+    address = None
 
     if data.address_id:
         address = (
@@ -109,16 +110,36 @@ def calculate_shipping_rates(
             detail="Produk dalam keranjang tidak ditemukan",
         )
 
+    has_preorder = any(getattr(p, "is_preorder", False) for p in products if p.id in [it.product_id for it in data.items])
+    max_preorder_days = max([getattr(p, "preorder_days", 1) for p in products if getattr(p, "is_preorder", False) and p.id in [it.product_id for it in data.items]], default=0)
+    po_dates = [
+        getattr(p, "preorder_pickup_date", None)
+        for p in products
+        if getattr(p, "is_preorder", False) and p.id in [it.product_id for it in data.items] and getattr(p, "preorder_pickup_date", None)
+    ]
+    preorder_pickup_date = max(po_dates) if po_dates else None
+
     dest_lat = address.latitude if address else None
     dest_lng = address.longitude if address else None
+
+    # Jika ada item Pre-Order (Frozen), hanya panggil Paxel (Cold Chain)
+    couriers_param = "paxel" if has_preorder else "paxel,gojek,grab,lalamove"
 
     rates = get_courier_rates(
         destination_postal_code=destination_postal_code,
         items=items,
-        couriers="paxel,gojek,grab,lalamove",
+        couriers=couriers_param,
         destination_latitude=dest_lat,
         destination_longitude=dest_lng,
     )
+
+    pricing_list = rates.get("pricing", [])
+    if has_preorder:
+        # Filter ketat untuk Pre-Order: HANYA izinkan Paxel (karena Gojek/Grab sameday tidak punya fasilitas pendingin dan tidak bisa dijadwalkan seminggu lagi)
+        pricing_list = [
+            p for p in pricing_list
+            if p.get("courier_code", "").lower() == "paxel" or "paxel" in p.get("courier_name", "").lower()
+        ]
 
     total_weight_grams = sum(it["weight"] * it["quantity"] for it in items)
 
@@ -126,7 +147,10 @@ def calculate_shipping_rates(
         "destination_postal_code": destination_postal_code,
         "address": address_info,
         "total_weight_grams": total_weight_grams,
-        "pricing": rates.get("pricing", []),
+        "has_preorder": has_preorder,
+        "max_preorder_days": max_preorder_days,
+        "preorder_pickup_date": preorder_pickup_date,
+        "pricing": pricing_list,
         "is_fallback": rates.get("is_fallback", False),
     }
 

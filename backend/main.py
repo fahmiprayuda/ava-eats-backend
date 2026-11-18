@@ -88,6 +88,33 @@ try:
                 FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
             """))
             conn.commit()
+
+        # Migrasi otomatis: tambahkan kolom is_preorder & preorder_days ke products
+        res_prod_po = conn.execute(text("SHOW COLUMNS FROM products LIKE 'is_preorder';")).fetchone()
+        if not res_prod_po:
+            conn.execute(text("ALTER TABLE products ADD COLUMN is_preorder TINYINT(1) NOT NULL DEFAULT 0;"))
+            conn.commit()
+
+        res_prod_days = conn.execute(text("SHOW COLUMNS FROM products LIKE 'preorder_days';")).fetchone()
+        if not res_prod_days:
+            conn.execute(text("ALTER TABLE products ADD COLUMN preorder_days INT NOT NULL DEFAULT 7;"))
+            conn.commit()
+
+        res_prod_pdate = conn.execute(text("SHOW COLUMNS FROM products LIKE 'preorder_pickup_date';")).fetchone()
+        if not res_prod_pdate:
+            conn.execute(text("ALTER TABLE products ADD COLUMN preorder_pickup_date VARCHAR(50) NULL;"))
+            conn.commit()
+
+        # Migrasi otomatis: tambahkan kolom is_preorder & estimated_delivery_date ke orders
+        res_order_po = conn.execute(text("SHOW COLUMNS FROM orders LIKE 'is_preorder';")).fetchone()
+        if not res_order_po:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN is_preorder TINYINT(1) NOT NULL DEFAULT 0;"))
+            conn.commit()
+
+        res_order_est = conn.execute(text("SHOW COLUMNS FROM orders LIKE 'estimated_delivery_date';")).fetchone()
+        if not res_order_est:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN estimated_delivery_date DATETIME NULL;"))
+            conn.commit()
 except Exception as e:
     print(f"Warning auto-migration database: {e}")
 

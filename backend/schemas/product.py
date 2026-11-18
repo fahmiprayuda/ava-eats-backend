@@ -17,4 +17,10 @@ class ProductRequest(BaseModel):
 
     is_available: bool = True
 
+    is_preorder: bool = False
+
+    preorder_days: int = Field(7, ge=1, le=60)
+
+    preorder_pickup_date: Optional[str] = None
+
     category_id: Optional[int] = None

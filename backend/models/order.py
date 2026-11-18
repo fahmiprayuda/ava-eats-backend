@@ -41,6 +41,8 @@ class Order(Base):
     discount_amount = Column(Integer, nullable=False, default=0)
     grand_total = Column(Integer, nullable=False, default=0)
     status = Column(String(30),nullable=False, default="pending")
+    is_preorder = Column(Boolean, nullable=False, default=False)
+    estimated_delivery_date = Column(DateTime, nullable=True)
     cancellation_reason = Column(String(255), nullable=True)
     refund_status = Column(String(30), nullable=True)
     refund_note = Column(String(255), nullable=True)

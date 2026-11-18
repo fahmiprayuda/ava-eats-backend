@@ -73,6 +73,9 @@ def create_product(
         weight_grams=data.weight_grams,
         stock=data.stock,
         is_available=data.is_available,
+        is_preorder=data.is_preorder,
+        preorder_days=data.preorder_days,
+        preorder_pickup_date=data.preorder_pickup_date,
         category_id=data.category_id,
     )
 
@@ -102,8 +105,12 @@ def create_product(
             "weight_grams": new_product.weight_grams,
             "stock": new_product.stock,
             "is_available": new_product.is_available,
+            "is_preorder": new_product.is_preorder,
+            "preorder_days": new_product.preorder_days,
+            "preorder_pickup_date": new_product.preorder_pickup_date,
             "category_id": new_product.category_id,
             "category": new_product.category_name,
+            "category_icon": new_product.category_icon,
         }
     }
 
@@ -124,8 +131,12 @@ def get_products(
                 "weight_grams": item.weight_grams,
                 "stock": item.stock,
                 "is_available": item.is_available,
+                "is_preorder": getattr(item, "is_preorder", False),
+                "preorder_days": getattr(item, "preorder_days", 7),
+                "preorder_pickup_date": getattr(item, "preorder_pickup_date", None),
                 "category_id": item.category_id,
                 "category": item.category_name,
+                "category_icon": item.category_icon,
             }
             for item in products
         ]
@@ -156,8 +167,12 @@ def get_product(
             "weight_grams": product.weight_grams,
             "stock": product.stock,
             "is_available": product.is_available,
+            "is_preorder": getattr(product, "is_preorder", False),
+            "preorder_days": getattr(product, "preorder_days", 7),
+            "preorder_pickup_date": getattr(product, "preorder_pickup_date", None),
             "category_id": product.category_id,
             "category": product.category_name,
+            "category_icon": product.category_icon,
         }
     }
 
@@ -188,6 +203,9 @@ def update_product(
     existing_product.weight_grams = product.weight_grams
     existing_product.stock = product.stock
     existing_product.is_available = product.is_available
+    existing_product.is_preorder = product.is_preorder
+    existing_product.preorder_days = product.preorder_days
+    existing_product.preorder_pickup_date = product.preorder_pickup_date
     if product.category_id is not None:
         existing_product.category_id = product.category_id
 
@@ -223,8 +241,12 @@ def update_product(
             "weight_grams": existing_product.weight_grams,
             "stock": existing_product.stock,
             "is_available": existing_product.is_available,
+            "is_preorder": existing_product.is_preorder,
+            "preorder_days": existing_product.preorder_days,
+            "preorder_pickup_date": existing_product.preorder_pickup_date,
             "category_id": existing_product.category_id,
             "category": existing_product.category_name,
+            "category_icon": existing_product.category_icon,
         }
     }
 
